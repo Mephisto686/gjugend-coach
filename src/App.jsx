@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import Dexie from "dexie";
-import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, Download, Upload, Shuffle, Filter, Clock, Trophy, Bot, RefreshCw, CheckSquare, Square, Dices, ListChecks } from "lucide-react";
+import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, Download, Upload, Shuffle, Filter, Clock, Trophy, Bot, RefreshCw, CheckSquare, Square, Dices, ListChecks, Wallet, Phone, MapPin, AlertTriangle, ShieldCheck } from "lucide-react";
 
 // ── DEXIE DB ──────────────────────────────────────────────────────
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 const CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed" },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff" },
@@ -31,14 +31,57 @@ const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2);
 const now = () => new Date().toISOString();
 const fmtDate = s => s?new Date(s).toLocaleDateString("de-DE",{weekday:"short",day:"2-digit",month:"2-digit",year:"numeric"}):"";
 const todayISO = () => new Date().toISOString().split("T")[0];
-const dlJson = (o,n)=>{ const a=document.createElement("a");a.href="data:application/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(o,null,2));a.download=n;a.click(); };
-const dlCsv  = (r,c,n)=>{ const csv=[c.join(","),...r.map(x=>c.map(k=>`"${String(x[k]??"").replace(/"/g,'""')}"`).join(","))].join("\n"),a=document.createElement("a");a.href="data:text/csv;charset=utf-8,\uFEFF"+encodeURIComponent(csv);a.download=n;a.click(); };
-const exportExJson = (ex) => dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:[ex]}, `uebung_${ex.title.replace(/[^a-z0-9]/gi,'_')}_${todayISO()}.json`);
+// ── SAVE FILE mit Dialog (Android/Desktop: zeigt "Speichern unter") ──
+const saveFile = async (content, filename, mimeType) => {
+  // Methode 1: File System Access API → zeigt echten Speichern-Dialog
+  if (window.showSaveFilePicker) {
+    try {
+      const ext = filename.split('.').pop();
+      const types = {
+        json: [{description:'JSON Datei', accept:{'application/json':['.json']}}],
+        csv:  [{description:'CSV Datei',  accept:{'text/csv':['.csv']}}],
+        html: [{description:'HTML Datei', accept:{'text/html':['.html']}}],
+      };
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: types[ext] || [{description:'Datei', accept:{'*/*':['.' + ext]}}],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      return true;
+    } catch(e) {
+      if (e.name === 'AbortError') return false; // Nutzer hat abgebrochen
+      // Fallback bei anderen Fehlern
+    }
+  }
+  // Methode 2: Blob + Object URL (zuverlässiger als data: URI auf Android)
+  try {
+    const mime = mimeType || 'application/octet-stream';
+    const blob = new Blob([content], {type: mime});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+    return true;
+  } catch(e) { return false; }
+};
 
-const exportExHtml = (ex) => {
+const dlJson = async (o, n) => await saveFile(JSON.stringify(o, null, 2), n, 'application/json');
+const dlCsv  = async (r, c, n) => {
+  const csv = [c.join(','), ...r.map(x => c.map(k => `"${String(x[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+  await saveFile('\uFEFF' + csv, n, 'text/csv;charset=utf-8;');
+};
+const exportExJson = (ex) => dlJson(
+  {version:APP_VERSION, exportDate:now(), type:'exercises', exercises:[ex]},
+  `uebung_${ex.title.replace(/[^a-z0-9]/gi,'_')}_${todayISO()}.json`
+);
+
+const buildExHtml = (ex) => {
   const cat=CATS[ex.category]||{};
   const stars='★'.repeat(ex.rating||0)+'☆'.repeat(5-(ex.rating||0));
-  const html=`<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>${ex.title}</title>
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>${ex.title}</title>
 <style>body{font-family:system-ui,sans-serif;max-width:780px;margin:40px auto;padding:20px 28px;color:#1e293b}h1{font-size:26px;margin:0 0 8px}
 .badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:13px;font-weight:700;background:${cat.bg||'#f1f5f9'};color:${cat.color||'#64748b'}}
 .meta{color:#64748b;font-size:14px;margin:10px 0 20px}.stars{color:#f59e0b;font-size:16px;letter-spacing:2px}
@@ -48,9 +91,14 @@ const exportExHtml = (ex) => {
 .mat{background:#dcfce7;color:#166534}.tag{background:#f1f5f9;color:#64748b}
 img{width:100%;max-height:280px;object-fit:cover;border-radius:8px;margin-bottom:18px}
 .footer{margin-top:40px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8}
-@media print{body{margin:0;padding:16px}button{display:none}}</style></head>
+.btns{display:flex;gap:10px;justify-content:flex-end;margin-bottom:20px}
+.btn{padding:8px 18px;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:700}
+@media print{body{margin:0;padding:16px}.btns{display:none}}</style></head>
 <body>
-<button onclick="window.print()" style="float:right;padding:8px 18px;background:#166534;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px;font-weight:700">🖨 Drucken / PDF</button>
+<div class="btns">
+  <button class="btn" style="background:#e2e8f0;color:#1e293b" onclick="window.close()">✕ Schließen</button>
+  <button class="btn" style="background:#166534;color:white" onclick="window.print()">🖨 Drucken / PDF speichern</button>
+</div>
 <h1>${ex.title}</h1>
 <span class="badge">${cat.emoji||''} ${cat.label||ex.category}</span>
 <div class="meta"><span class="stars">${stars}</span> &nbsp;·&nbsp; ⏱ ${ex.duration} Min &nbsp;·&nbsp; 👥 ${ex.minPlayers}–${ex.maxPlayers} Kinder${ex.source?' &nbsp;·&nbsp; Quelle: '+ex.source:''}</div>
@@ -62,7 +110,17 @@ ${ex.tags?.length?`<div class="sec"><h2>🏷️ Tags</h2><div class="chips">${ex
 ${ex.notes?`<div class="sec"><h2>💬 Notizen & Varianten</h2><div class="box" style="font-style:italic">${ex.notes}</div></div>`:''}
 <div class="footer">G-Jugend Coach v${APP_VERSION} · Erstellt: ${new Date().toLocaleDateString('de-DE')}</div>
 </body></html>`;
-  const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+};
+
+// HTML: In neuem Tab öffnen + als Datei speichern
+const exportExHtml = async (ex) => {
+  const html = buildExHtml(ex);
+  const filename = `uebung_${ex.title.replace(/[^a-z0-9]/gi,'_')}_${todayISO()}.html`;
+  // Versuche zuerst Speicherdialog
+  const saved = await saveFile(html, filename, 'text/html');
+  // Öffne zusätzlich im Browser zum direkten Drucken
+  const w = window.open('', '_blank');
+  if (w) { w.document.write(html); w.document.close(); }
 };
 
 const readText    = f=>new Promise((r,j)=>{const x=new FileReader();x.onload=e=>r(e.target.result);x.onerror=j;x.readAsText(f);});
@@ -383,21 +441,55 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
 }
 
 // ── PLAYER FORM ───────────────────────────────────────────────────
-const EMPTY_PLAYER = {name:"",birthYear:2019,strength:1,active:true,jersey:"",notes:""};
+const EMPTY_PLAYER = {name:"",birthYear:2019,strength:1,active:true,jersey:"",notes:"",vereinsmitglied:false,spielerpass:false,contacts:[]};
+const EMPTY_CONTACT = {name:"",relation:"Mutter",phone:"",email:"",address:""};
+const RELATIONS = ["Mutter","Vater","Elternteil","Großelternteil","Geschwister","Sonstiges"];
+
+function ContactsEditor({contacts,onChange}) {
+  const [editIdx,setEditIdx]=useState(null);
+  const [form,setForm]=useState(null);
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const startAdd=()=>{setForm({...EMPTY_CONTACT,id:uid()});setEditIdx(-1);};
+  const startEdit=(i)=>{setForm({...contacts[i]});setEditIdx(i);};
+  const save=()=>{if(!form.name.trim())return;if(editIdx===-1)onChange([...contacts,form]);else onChange(contacts.map((c,i)=>i===editIdx?form:c));setForm(null);setEditIdx(null);};
+  const remove=(i)=>onChange(contacts.filter((_,j)=>j!==i));
+  if(form) return(
+    <div style={{background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px",marginBottom:14}}>
+      <div style={{fontWeight:700,fontSize:13,color:C.text,marginBottom:12}}>{editIdx===-1?"Kontakt hinzufügen":"Kontakt bearbeiten"}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}><Inp label="Name *" value={form.name} onChange={e=>set("name",e.target.value)} style={{marginBottom:0}}/><Sel label="Beziehung" value={form.relation} onChange={e=>set("relation",e.target.value)} style={{marginBottom:0}}>{RELATIONS.map(r=><option key={r} value={r}>{r}</option>)}</Sel></div>
+      <Inp label="Telefon" value={form.phone} onChange={e=>set("phone",e.target.value)} placeholder="+49 ..."/>
+      <Inp label="E-Mail" type="email" value={form.email} onChange={e=>set("email",e.target.value)} placeholder="email@beispiel.de"/>
+      <Txta label="Adresse" value={form.address} onChange={e=>set("address",e.target.value)} rows={2} placeholder="Straße, PLZ Ort"/>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Btn sm variant="secondary" onClick={()=>{setForm(null);setEditIdx(null);}}>Abbrechen</Btn><Btn sm onClick={save}>Speichern</Btn></div>
+    </div>);
+  return(<div style={{marginBottom:14}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}><label style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Kontaktpersonen ({contacts.length})</label><Btn sm onClick={startAdd}><Plus size={12}/> Hinzufügen</Btn></div>
+    {contacts.length===0&&<div style={{fontSize:13,color:C.muted,padding:"6px 0"}}>Noch keine Kontaktperson eingetragen.</div>}
+    {contacts.map((c,i)=><div key={c.id||i} style={{background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+      <div><div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.name} <span style={{fontSize:12,color:C.muted,fontWeight:400}}>({c.relation})</span></div>{c.phone&&<div style={{fontSize:13,color:C.muted,marginTop:2}}>📞 {c.phone}</div>}{c.email&&<div style={{fontSize:13,color:C.muted}}>✉️ {c.email}</div>}{c.address&&<div style={{fontSize:12,color:C.muted}}>📍 {c.address}</div>}</div>
+      <div style={{display:"flex",gap:4,flexShrink:0}}><button onClick={()=>startEdit(i)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4}}><Edit2 size={13}/></button><button onClick={()=>remove(i)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={13}/></button></div>
+    </div>)}
+  </div>);
+}
 function PlayerForm({player,onSave,onClose}) {
-  const [form,setForm]=useState({...EMPTY_PLAYER,...player});
+  const [form,setForm]=useState({...EMPTY_PLAYER,...player,contacts:player?.contacts||[]});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const doSave=(andAdd)=>{
     if(!form.name.trim())return;
     onSave({...form,id:form.id||uid(),createdAt:form.createdAt||now()});
-    if(andAdd) setForm(EMPTY_PLAYER);
+    if(andAdd) setForm({...EMPTY_PLAYER,contacts:[]});
   };
   return(<div>
     <Inp label="Name *" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="Vorname"/>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><Inp label="Jahrgang" type="number" value={form.birthYear} onChange={e=>set("birthYear",Number(e.target.value))} style={{marginBottom:0}}/><Inp label="Trikot #" value={form.jersey} onChange={e=>set("jersey",e.target.value)} placeholder="z.B. 7" style={{marginBottom:0}}/></div>
     <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Stärke</label><div style={{display:"flex",flexDirection:"column",gap:8}}>{[1,2,3,4].map(n=>{const s=STR[n];return(<button key={n} onClick={()=>set("strength",n)} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"10px 14px",borderRadius:10,border:`2px solid ${form.strength===n?s.color:C.border}`,background:form.strength===n?s.light:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:20,lineHeight:1}}>{s.emoji}</span><div><div style={{fontWeight:700,fontSize:14,color:form.strength===n?s.color:C.text}}>{s.label}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{s.desc}</div></div></button>);})}</div></div>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><input type="checkbox" id="pa" checked={form.active} onChange={e=>set("active",e.target.checked)} style={{width:16,height:16}}/><label htmlFor="pa" style={{fontSize:14,fontWeight:600,color:C.text,cursor:"pointer"}}>Aktiv</label></div>
+    <div style={{display:"flex",gap:16,marginBottom:14,flexWrap:"wrap"}}>
+      <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={form.active} onChange={e=>set("active",e.target.checked)} style={{width:16,height:16}}/><span style={{fontSize:14,fontWeight:600,color:C.text}}>Aktiv</span></label>
+      <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={!!form.vereinsmitglied} onChange={e=>set("vereinsmitglied",e.target.checked)} style={{width:16,height:16}}/><span style={{fontSize:14,fontWeight:600,color:C.text}}>Vereinsmitglied</span></label>
+      <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={!!form.spielerpass} onChange={e=>set("spielerpass",e.target.checked)} style={{width:16,height:16}}/><span style={{fontSize:14,fontWeight:600,color:C.text}}>Spielerpass ✓</span></label>
+    </div>
     <Txta label="Notizen" value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2}/>
+    <ContactsEditor contacts={form.contacts||[]} onChange={v=>set("contacts",v)}/>
     <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
       <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
       {!player?.id&&<Btn variant="secondary" onClick={()=>doSave(true)}>+ Weiteren anlegen</Btn>}
@@ -435,6 +527,7 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
   const [tab,setTab]=useState("players");
   const [modal,setModal]=useState(null);
   const [del,setDel]=useState(null);
+  const [kontakteSearch,setKontakteSearch]=useState("");
   const playerImportRef=useRef();
   const coachImportRef=useRef();
 
@@ -472,10 +565,10 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         {tab==="players"&&<><Btn onClick={()=>playerImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Spieler importieren</Btn><input ref={playerImportRef} type="file" accept=".json,.csv" onChange={async e=>{const f=e.target.files?.[0];if(!f)return;if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));p.forEach(x=>onSavePlayer(x));toast(`${p.length} Spieler importiert`);} else handleImportPlayers(e); e.target.value="";}} style={{display:"none"}}/></>}
         {tab==="coaches"&&<><Btn onClick={()=>coachImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Trainer importieren</Btn><input ref={coachImportRef} type="file" accept=".json" onChange={handleImportCoaches} style={{display:"none"}}/></>}
-        <Btn onClick={()=>setModal({type:tab==="players"?"pf":"cf",data:null})}><Plus size={16}/> {tab==="players"?"Spieler":"Trainer"} hinzufügen</Btn>
+        {(tab==="players"||tab==="coaches")&&<Btn onClick={()=>setModal({type:tab==="players"?"pf":"cf",data:null})}><Plus size={16}/> {tab==="players"?"Spieler":"Trainer"} hinzufügen</Btn>}
       </div>
     </div>
-    <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:12,width:"fit-content"}}>{tb("players","Spieler",players.length)}{tb("coaches","Trainer",coaches.length)}</div>
+    <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:12,width:"fit-content"}}>{tb("players","Spieler",players.length)}{tb("coaches","Trainer",coaches.length)}{tb("kontakte","Kontakte",players.filter(p=>(p.contacts||[]).length>0).length)}</div>
     {totalSel>0&&<div style={{background:C.accentL,border:`1.5px solid ${C.accent}`,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
       <span style={{fontWeight:700,color:C.primary,fontSize:14}}>✓ {totalSel} ausgewählt</span>
       <Btn sm onClick={()=>setModal({type:"quickTraining"})}><CalendarDays size={13}/> Zum Training hinzufügen</Btn>
@@ -510,6 +603,44 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
           </div>
         </div>);})}
       </div>)}
+    {tab==="kontakte"&&(<div>
+      <div style={{position:"relative",marginBottom:16}}>
+        <Search size={15} style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:C.muted}}/>
+        <input value={kontakteSearch} onChange={e=>setKontakteSearch(e.target.value)} placeholder="Spieler oder Kontakt suchen..." style={{width:"100%",padding:"9px 12px 9px 36px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",fontFamily:"inherit",boxSizing:"border-box"}}/>
+      </div>
+      {players.length===0?<Empty icon="👥" title="Noch keine Spieler" sub="Lege zuerst Spieler im Tab ‚Spieler' an." onAdd={()=>setTab("players")} addLabel="Zu Spieler"/>:
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {players.filter(p=>{const q=kontakteSearch.toLowerCase();if(!q)return true;if(p.name.toLowerCase().includes(q))return true;return (p.contacts||[]).some(c=>c.name.toLowerCase().includes(q)||c.phone?.includes(q));}).map(p=>{
+            const contacts=p.contacts||[];
+            return(<div key={p.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
+              <div style={{padding:"12px 16px",background:"#f8fafc",borderBottom:contacts.length?`1px solid ${C.border}`:"none",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:36,height:36,borderRadius:"50%",background:STR[p.strength].light,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{STR[p.strength].emoji}</div>
+                  <div>
+                    <div style={{fontWeight:800,fontSize:15,color:C.text}}>{p.name}</div>
+                    <div style={{display:"flex",gap:8,marginTop:2}}>
+                      {p.jersey&&<span style={{fontSize:11,color:C.muted}}>#{p.jersey}</span>}
+                      <span style={{fontSize:11,padding:"1px 6px",borderRadius:10,background:p.vereinsmitglied?"#dcfce7":"#f1f5f9",color:p.vereinsmitglied?"#16a34a":C.muted,fontWeight:700}}>{p.vereinsmitglied?"✓ Mitglied":"○ Kein Mitglied"}</span>
+                      <span style={{fontSize:11,padding:"1px 6px",borderRadius:10,background:p.spielerpass?"#dbeafe":"#f1f5f9",color:p.spielerpass?"#1d4ed8":C.muted,fontWeight:700}}>{p.spielerpass?"✓ Pass":"○ Kein Pass"}</span>
+                    </div>
+                  </div>
+                </div>
+                <button onClick={()=>setModal({type:"pf",data:p})} style={{background:"none",border:`1.5px solid ${C.border}`,borderRadius:8,cursor:"pointer",color:C.muted,padding:"6px 10px",display:"flex",alignItems:"center",gap:4,fontFamily:"inherit",fontSize:12,fontWeight:700}}><Edit2 size={12}/> Bearbeiten</button>
+              </div>
+              {contacts.length===0&&<div style={{padding:"10px 16px",fontSize:13,color:C.muted,fontStyle:"italic"}}>Keine Kontaktperson – <button onClick={()=>setModal({type:"pf",data:p})} style={{background:"none",border:"none",cursor:"pointer",color:C.primary,fontWeight:700,fontSize:13,padding:0,fontFamily:"inherit"}}>jetzt hinzufügen</button></div>}
+              {contacts.map((c,i)=><div key={i} style={{padding:"10px 16px",borderTop:i>0?`1px solid ${C.border}`:"none",display:"flex",alignItems:"flex-start",gap:12}}>
+                <div style={{fontSize:20,marginTop:2,flexShrink:0}}>{c.relation==="Mutter"?"👩":c.relation==="Vater"?"👨":"👤"}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{c.name} <span style={{fontWeight:400,fontSize:12,color:C.muted}}>({c.relation})</span></div>
+                  {c.phone&&<a href={`tel:${c.phone}`} style={{display:"flex",alignItems:"center",gap:4,fontSize:13,color:"#2563eb",textDecoration:"none",marginTop:2}}><Phone size={12}/> {c.phone}</a>}
+                  {c.email&&<div style={{fontSize:12,color:C.muted,marginTop:1}}>✉️ {c.email}</div>}
+                  {c.address&&<div style={{display:"flex",alignItems:"flex-start",gap:4,fontSize:12,color:C.muted,marginTop:1}}><MapPin size={11} style={{marginTop:2,flexShrink:0}}/>{c.address}</div>}
+                </div>
+              </div>)}
+            </div>);
+          })}
+        </div>}
+    </div>)}
     {del&&<Modal title="Löschen?" onClose={()=>setDel(null)}><p style={{color:C.text,marginTop:0}}>„<strong>{del.name}</strong>" wirklich löschen?</p><div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={()=>setDel(null)} variant="secondary">Abbrechen</Btn><Btn onClick={()=>{del.type==="player"?onDeletePlayer(del.id):onDeleteCoach(del.id);setDel(null);}} variant="danger"><Trash2 size={14}/> Löschen</Btn></div></Modal>}
     {modal?.type==="pf"&&<Modal title={modal.data?"Spieler bearbeiten":"Neuer Spieler"} onClose={()=>setModal(null)}><PlayerForm player={modal.data} onSave={(p,andAdd)=>{onSavePlayer(p);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="cf"&&<Modal title={modal.data?"Trainer bearbeiten":"Neuer Trainer"} onClose={()=>setModal(null)}><CoachForm coach={modal.data} onSave={(c,andAdd)=>{onSaveCoach(c);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
@@ -562,6 +693,56 @@ function TeamBuilderModal({availablePlayers,onSaveTeams,onClose}) {
       </div>
     </>)}
     <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}><Btn onClick={onClose} variant="secondary">Schließen</Btn></div>
+  </div>);
+}
+
+// ── NOTFALL-PLAN ──────────────────────────────────────────────────
+function NotfallModal({exercises,onClose}) {
+  const [kids,setKids]=useState(10);
+  const [minutes,setMinutes]=useState(10);
+  const [mat,setMat]=useState([]);
+  const [results,setResults]=useState(null);
+  const toggleMat=m=>setMat(prev=>prev.includes(m)?prev.filter(x=>x!==m):[...prev,m]);
+  const find=()=>{
+    const scored=exercises.filter(ex=>{
+      if((ex.duration||10)>minutes+3)return false;
+      if(kids<(ex.minPlayers||0))return false;
+      if(kids>(ex.maxPlayers||99))return false;
+      return true;
+    }).map(ex=>{
+      let score=0;
+      const exMat=ex.material||[];
+      if(exMat.length===0)score+=3;
+      else{const ok=exMat.filter(m=>mat.includes(m)).length;score+=(ok/exMat.length)*3;}
+      score+=Math.max(0,1-(Math.abs((ex.duration||10)-minutes)/(minutes+1)))*2;
+      score+=(ex.rating||3)*0.2;
+      return{...ex,score};
+    }).sort((a,b)=>b.score-a.score).slice(0,3);
+    setResults(scored);
+  };
+  if(results) return(<div>
+    <div style={{background:"#fef2f2",borderRadius:10,padding:"10px 14px",marginBottom:14,border:"1px solid #fecaca",fontSize:13,color:"#dc2626",fontWeight:600}}>🚨 Alternativen für {kids} Kinder · {minutes} Min übrig</div>
+    {results.length===0?<div style={{textAlign:"center",padding:"30px 0",color:C.muted}}><div style={{fontSize:36,marginBottom:8}}>😕</div><div style={{fontWeight:700,color:C.text}}>Keine passenden Übungen gefunden</div><div style={{fontSize:13,marginTop:4}}>Mehr Material wählen oder Zeit erhöhen</div></div>:
+      <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+        {results.map((ex,i)=><div key={ex.id} style={{background:C.card,borderRadius:10,border:`2px solid ${i===0?C.accent:C.border}`,padding:"12px 16px"}}>
+          {i===0&&<div style={{fontSize:11,fontWeight:800,color:C.primary,marginBottom:6}}>⭐ BESTE OPTION</div>}
+          <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:6}}><CatBadge cat={ex.category} small/><span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>⏱ {ex.duration} Min · 👥 {ex.minPlayers}–{ex.maxPlayers}</span></div>
+          <div style={{fontWeight:800,fontSize:15,color:C.text,marginBottom:4}}>{ex.title}</div>
+          {ex.description&&<div style={{fontSize:13,color:C.muted,lineHeight:1.5,marginBottom:6}}>{ex.description.slice(0,120)}{ex.description.length>120?"…":""}</div>}
+          {ex.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:10,background:mat.includes(m)?C.accentL:"#f1f5f9",color:mat.includes(m)?C.primary:C.muted,fontWeight:600}}>📦 {m}</span>)}</div>}
+        </div>)}
+      </div>}
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={()=>setResults(null)} variant="secondary">Zurück</Btn><Btn onClick={onClose}>Schließen</Btn></div>
+  </div>);
+  return(<div>
+    <div style={{background:"#fef2f2",borderRadius:10,padding:"12px 14px",marginBottom:16,border:"1px solid #fecaca",fontSize:13,color:"#dc2626",fontWeight:700}}>🚨 Übung funktioniert nicht – sofort Alternativen finden</div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder am Platz</label><input type="number" min={2} max={20} value={kids} onChange={e=>setKids(Number(e.target.value))} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:18,fontWeight:800,textAlign:"center",outline:"none",boxSizing:"border-box"}}/></div>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Zeit übrig</label><div style={{display:"flex",gap:6}}>{[5,10,15,20].map(m=><button key={m} onClick={()=>setMinutes(m)} style={{flex:1,padding:"9px 4px",borderRadius:8,border:`2px solid ${minutes===m?"#dc2626":C.border}`,background:minutes===m?"#fee2e2":"white",color:minutes===m?"#dc2626":C.muted,cursor:"pointer",fontWeight:800,fontSize:14,fontFamily:"inherit"}}>{m}'</button>)}</div></div>
+    </div>
+    <div style={{marginBottom:16}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Verfügbares Material (optional)</label><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{PMAT.map(m=><button key={m} onClick={()=>toggleMat(m)} style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${mat.includes(m)?C.primary:C.border}`,background:mat.includes(m)?C.accentL:"white",color:mat.includes(m)?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:600,fontFamily:"inherit"}}>{m}</button>)}</div></div>
+    {exercises.length===0&&<div style={{background:"#fffbeb",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#92400e",border:"1px solid #fde68a"}}>⚠️ Noch keine Übungen in der Bibliothek.</div>}
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={onClose} variant="secondary">Abbrechen</Btn><Btn onClick={find} style={{background:"#dc2626",color:"white"}} disabled={exercises.length===0}><AlertTriangle size={14}/> Alternativen finden</Btn></div>
   </div>);
 }
 
@@ -771,6 +952,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
       <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Training</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{sessions.length} Einheiten</div></div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <Btn onClick={()=>setModal({type:"notfall"})} style={{background:"#dc2626",color:"white"}} sm><AlertTriangle size={14}/> SOS</Btn>
         <Btn onClick={()=>setModal({type:"manual"})} variant="secondary" sm><ListChecks size={14}/> Manuell planen</Btn>
         <Btn onClick={()=>setModal({type:"ai"})} variant="ai" sm><Bot size={14}/> KI-Plan</Btn>
         <Btn onClick={()=>setModal({type:"session",data:null})}><Plus size={16}/> Protokoll</Btn>
@@ -791,6 +973,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
         </div>);})}
       </div>)}
     {tab==="teams"&&<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:20}}><h2 style={{margin:"0 0 6px",fontSize:18,fontWeight:800}}>Schnelle Teambildung</h2><p style={{margin:"0 0 16px",color:C.muted,fontSize:14}}>Teams bilden ohne Training zu protokollieren.</p><Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={16}/> Teams zusammenstellen</Btn></div>}
+    {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="manual"&&<Modal title="📋 Training manuell planen" onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
     {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
@@ -897,8 +1080,89 @@ function TurnierPage({tournaments,onSaveTournament,onDeleteTournament}) {
   </div>);
 }
 
+// ── KASSE PAGE ────────────────────────────────────────────────────
+const KASSE_CATS_EIN = ["Elternbeitrag","Vereinszuschuss","Turnier-Einnahme","Sponsoring","Sonstiges"];
+const KASSE_CATS_AUS = ["Material","Turnierbeitrag","Ausrüstung","Verpflegung","Sonstiges"];
+
+function KasseForm({entry,onSave,onClose}) {
+  const [form,setForm]=useState({date:todayISO(),description:"",amount:"",type:"ein",category:"Sonstiges",...entry});
+  const set=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const cats=form.type==="ein"?KASSE_CATS_EIN:KASSE_CATS_AUS;
+  const doSave=()=>{
+    if(!form.description.trim()||!form.amount)return;
+    onSave({...form,id:form.id||uid(),amount:parseFloat(form.amount)||0,createdAt:form.createdAt||now()});
+  };
+  return(<div>
+    <div style={{display:"flex",gap:8,marginBottom:14}}>
+      {[["ein","💰 Einnahme","#16a34a","#dcfce7"],["aus","💸 Ausgabe","#dc2626","#fee2e2"]].map(([k,l,col,bg])=>
+        <button key={k} onClick={()=>{set("type",k);set("category","Sonstiges");}} style={{flex:1,padding:"10px",borderRadius:10,border:`2px solid ${form.type===k?col:C.border}`,background:form.type===k?bg:"white",color:form.type===k?col:C.muted,cursor:"pointer",fontWeight:800,fontSize:14,fontFamily:"inherit"}}>{l}</button>)}
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{marginBottom:0}}/>
+      <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Betrag (€)</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0,00" style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",boxSizing:"border-box"}}/></div>
+    </div>
+    <Inp label="Beschreibung *" value={form.description} onChange={e=>set("description",e.target.value)} placeholder="z.B. Trikots, Turnieranmeldung..."/>
+    <Sel label="Kategorie" value={form.category} onChange={e=>set("category",e.target.value)}>{cats.map(c=><option key={c} value={c}>{c}</option>)}</Sel>
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${C.border}`}}>
+      <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
+      <Btn onClick={doSave}>{entry?.id?"Speichern":"Eintragen"}</Btn>
+    </div>
+  </div>);
+}
+
+function KassePage({kassenbuch,onSave,onDelete,toast}) {
+  const [modal,setModal]=useState(null);
+  const [filter,setFilter]=useState("");
+  const sorted=[...kassenbuch].sort((a,b)=>new Date(b.date)-new Date(a.date)||(new Date(b.createdAt)-new Date(a.createdAt)));
+  const filtered=filter?sorted.filter(k=>k.type===filter):sorted;
+  const ein=kassenbuch.filter(k=>k.type==="ein").reduce((s,k)=>s+k.amount,0);
+  const aus=kassenbuch.filter(k=>k.type==="aus").reduce((s,k)=>s+k.amount,0);
+  const balance=ein-aus;
+  const fmt=n=>n.toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
+  return(<div>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
+      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Mannschaftskasse</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{kassenbuch.length} Einträge</div></div>
+      <Btn onClick={()=>setModal({type:"form",data:null})}><Plus size={16}/> Eintrag</Btn>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
+      <div style={{background:"#dcfce7",borderRadius:12,padding:"16px 18px",border:"1.5px solid #86efac"}}>
+        <div style={{fontSize:11,fontWeight:800,color:"#15803d",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Einnahmen</div>
+        <div style={{fontSize:20,fontWeight:900,color:"#15803d"}}>+{fmt(ein)} €</div>
+      </div>
+      <div style={{background:"#fee2e2",borderRadius:12,padding:"16px 18px",border:"1.5px solid #fca5a5"}}>
+        <div style={{fontSize:11,fontWeight:800,color:"#dc2626",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Ausgaben</div>
+        <div style={{fontSize:20,fontWeight:900,color:"#dc2626"}}>-{fmt(aus)} €</div>
+      </div>
+      <div style={{background:balance>=0?"#eff6ff":"#fef2f2",borderRadius:12,padding:"16px 18px",border:`1.5px solid ${balance>=0?"#93c5fd":"#fca5a5"}`}}>
+        <div style={{fontSize:11,fontWeight:800,color:balance>=0?"#1d4ed8":"#dc2626",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Kontostand</div>
+        <div style={{fontSize:20,fontWeight:900,color:balance>=0?"#1d4ed8":"#dc2626"}}>{balance>=0?"+":""}{fmt(balance)} €</div>
+      </div>
+    </div>
+    <div style={{display:"flex",gap:6,marginBottom:16}}>
+      {[["","Alle"],["ein","💰 Einnahmen"],["aus","💸 Ausgaben"]].map(([k,l])=><button key={k} onClick={()=>setFilter(k)} style={{padding:"6px 14px",borderRadius:20,border:`1.5px solid ${filter===k?C.primary:C.border}`,background:filter===k?C.accentL:"white",color:filter===k?C.primary:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{l}</button>)}
+    </div>
+    {kassenbuch.length===0?<Empty icon="💰" title="Noch kein Eintrag" sub="Buche Einnahmen und Ausgaben der Mannschaftskasse." onAdd={()=>setModal({type:"form",data:null})} addLabel="Ersten Eintrag erstellen"/>:
+      filtered.length===0?<div style={{textAlign:"center",padding:"40px",color:C.muted,fontSize:14}}>Keine Einträge für diesen Filter.</div>:
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {filtered.map(k=><div key={k.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:40,height:40,borderRadius:10,background:k.type==="ein"?"#dcfce7":"#fee2e2",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{k.type==="ein"?"💰":"💸"}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:700,fontSize:14,color:C.text}}>{k.description}</div>
+            <div style={{fontSize:12,color:C.muted,marginTop:2}}>{fmtDate(k.date)} · {k.category}</div>
+          </div>
+          <div style={{fontWeight:900,fontSize:16,color:k.type==="ein"?"#16a34a":"#dc2626",flexShrink:0}}>{k.type==="ein"?"+":"-"}{fmt(k.amount)} €</div>
+          <div style={{display:"flex",gap:4,flexShrink:0}}>
+            <button onClick={()=>setModal({type:"form",data:k})} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4}}><Edit2 size={14}/></button>
+            <button onClick={()=>{if(confirm(`"${k.description}" löschen?`)){onDelete(k.id);toast("Eintrag gelöscht");}}} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button>
+          </div>
+        </div>)}
+      </div>}
+    {modal?.type==="form"&&<Modal title={modal.data?"Eintrag bearbeiten":"Neuer Eintrag"} onClose={()=>setModal(null)}><KasseForm entry={modal.data} onSave={e=>{onSave(e);setModal(null);toast("Eintrag gespeichert");}} onClose={()=>setModal(null)}/></Modal>}
+  </div>);
+}
+
 // ── SETTINGS PAGE ─────────────────────────────────────────────────
-function SettingsPage({exercises,players,coaches,sessions,tournaments,onImport,toast,apiKey,onSaveApiKey}) {
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));onImport(d,mode);toast("Import erfolgreich");}}catch(er){toast("Fehler: "+er.message,"err");}e.target.value=""; };
   const EC=({icon,title,desc,sub,fn})=><div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><div style={{fontWeight:700,fontSize:14,color:C.text}}>{icon} {title}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{desc}</div>{sub&&<div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{sub}</div>}</div><Btn sm onClick={fn}><Download size={13}/> Export</Btn></div>;
@@ -911,7 +1175,7 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,onImport,t
       {apiKey&&<div style={{marginTop:8,fontSize:12,color:"#16a34a",fontWeight:600}}>✅ API-Key aktiv – KI-Funktionen verfügbar</div>}
     </div>}/>
     <Sec title="📤 Exportieren" ch={<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments},`gjugend_backup_${todayISO()}.json`);toast("Backup exportiert");}}/>
+      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`gjugend_backup_${todayISO()}.json`);toast("Backup exportiert");}}/>
       <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`gjugend_uebungen_${todayISO()}.json`);toast("Übungen exportiert");}}/>
       <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`gjugend_team_${todayISO()}.json`);toast("Team exportiert");}}/>
       <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={()=>{dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`gjugend_spieler_${todayISO()}.csv`);toast("CSV exportiert");}}/>
@@ -928,7 +1192,7 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,onImport,t
 
 // ── NAV ───────────────────────────────────────────────────────────
 function Nav({page,setPage,counts}) {
-  const items=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"settings",icon:Settings,label:"Einstellungen"}];
+  const items=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
   return(<>
     <style>{`.gn{position:fixed;left:0;top:0;bottom:0;width:200px;background:${C.nav};display:flex;flex-direction:column;z-index:100;padding:0 12px 20px}.gm{display:flex;margin-left:200px;padding:28px;max-width:1100px}.gb{display:none;position:fixed;bottom:0;left:0;right:0;background:${C.nav};z-index:100;border-top:1px solid rgba(255,255,255,.1)}@media(max-width:640px){.gn{display:none}.gb{display:flex}.gm{margin-left:0!important;padding:16px;padding-bottom:80px}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     <div className="gn">
@@ -951,6 +1215,7 @@ export default function App() {
   const [coaches,    setCoaches,    cr]=useStorage("coaches",    []);
   const [sessions,   setSessions,   sr]=useStorage("sessions",   []);
   const [tournaments,setTournaments,tr]=useStorage("tournaments",[]);
+  const [kassenbuch, setKassenbuch, kr]=useStorage("kassenbuch", []);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
   const {toast,Toasts}=useToast();
   // Functional update helpers - prevent stale closure bugs
@@ -962,6 +1227,7 @@ export default function App() {
   const saveCo=x=>{ setCoaches(upsert(x));toast('Trainer gespeichert'); };
   const saveSe=x=>{ setSessions(upsert(x));toast('Training gespeichert'); };
   const saveTo=x=>{ setTournaments(upsert(x)); };
+  const saveKa=x=>{ setKassenbuch(upsert(x)); };
 
   const doImport=(data,mode)=>{
     if(mode==='merge'){
@@ -970,16 +1236,18 @@ export default function App() {
       if(data.coaches)setCoaches(mergeArr(data.coaches));
       if(data.sessions)setSessions(mergeArr(data.sessions));
       if(data.tournaments)setTournaments(mergeArr(data.tournaments));
+      if(data.kassenbuch)setKassenbuch(mergeArr(data.kassenbuch));
     } else if(mode==='replace'){
       if(data.exercises)setExercises(data.exercises);
       if(data.players)setPlayers(data.players);
       if(data.coaches)setCoaches(data.coaches);
       if(data.sessions)setSessions(data.sessions);
       if(data.tournaments)setTournaments(data.tournaments);
+      if(data.kassenbuch)setKassenbuch(data.kassenbuch);
     } else if(mode==='merge_players') setPlayers(mergeArr(data.players));
     else if(mode==='replace_players') setPlayers(data.players||[]);
   };
-  if(!er||!pr||!cr||!sr||!tr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
+  if(!er||!pr||!cr||!sr||!tr||!kr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
   return(<div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:C.bg,minHeight:"100vh"}}>
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
@@ -989,7 +1257,8 @@ export default function App() {
       {page==="team"     &&<TeamPage     players={players} coaches={coaches} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds})=>{setSessions(prev=>[...prev,{id:uid(),createdAt:now(),date:todayISO(),duration:60,location:"",weather:"",participantCount:"",coachIds,playerIds,exerciseIds:[],teams:[],notes:""}]);setPage("training");toast("Training angelegt ✓");}}/>}
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}}/>}
-      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)}/>}
+      {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
+      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)}/>}
     </main>
   </div>);
 }
