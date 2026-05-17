@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 const CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed" },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff" },
@@ -216,6 +216,13 @@ const Sel=({label,children,...p})=><div style={{marginBottom:14}}>{label&&<label
 const Btn=({children,variant="primary",sm,...p})=><button {...p} style={{padding:sm?"6px 14px":"9px 18px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:sm?13:14,fontFamily:"inherit",display:"inline-flex",alignItems:"center",gap:6,...(variant==="primary"?{background:C.primary,color:"white"}:variant==="danger"?{background:"#ef4444",color:"white"}:variant==="ai"?{background:"#6d28d9",color:"white"}:{background:"white",color:C.text,border:`1.5px solid ${C.border}`}),...p.style}}>{children}</button>;
 const Divider=()=><div style={{borderTop:`1px solid ${C.border}`,margin:"20px 0"}}/>;
 const Empty=({icon,title,sub,onAdd,addLabel})=><div style={{textAlign:"center",padding:"60px 24px",color:C.muted}}><div style={{fontSize:48,marginBottom:16}}>{icon}</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>{title}</div>{sub&&<div style={{fontSize:14,marginBottom:24}}>{sub}</div>}{onAdd&&<Btn onClick={onAdd}><Plus size={16}/> {addLabel}</Btn>}</div>;
+const Stepper=({value,onChange,min=1,max=99})=>(
+  <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:8,overflow:"hidden",background:"white",height:38}}>
+    <button onClick={()=>onChange(Math.max(min,value-1))} style={{width:38,height:"100%",border:"none",borderRight:`1px solid ${C.border}`,cursor:"pointer",background:"transparent",fontSize:20,color:value<=min?"#cbd5e1":C.text,lineHeight:1,flexShrink:0}}>−</button>
+    <div style={{flex:1,textAlign:"center",fontWeight:800,fontSize:16,color:C.text,minWidth:32}}>{value}</div>
+    <button onClick={()=>onChange(Math.min(max,value+1))} style={{width:38,height:"100%",border:"none",borderLeft:`1px solid ${C.border}`,cursor:"pointer",background:"transparent",fontSize:20,color:value>=max?"#cbd5e1":C.text,lineHeight:1,flexShrink:0}}>+</button>
+  </div>
+);
 
 // ── AI IMPORT ─────────────────────────────────────────────────────
 function AIImportModal({onSave,onClose,apiKey}) {
@@ -246,77 +253,195 @@ category: aufwaermen|koordination|technik|spielform|abschluss`;
 }
 
 // ── AI TRAINING PLAN ──────────────────────────────────────────────
-function AITrainingModal({players,exercises,onClose,apiKey,onSaveEx}) {
+function AITrainingModal({players,exercises,onClose,apiKey,onSaveEx,onSaveSession}) {
   const MAT_OPTS=["Bälle","Hütchen","Leibchen","Minitore","Koordinationsleiter","Stangen","Reifen","Pylonen"];
-  const [cfg,setCfg]=useState({kids:players.filter(p=>p.active).length||10,coaches:1,duration:60,focus:"",useLib:true,location:"outdoor",material:["Bälle"]});
+  const [cfg,setCfg]=useState({kids:players.filter(p=>p.active).length||10,coaches:1,duration:60,focus:"",useLib:true,location:"outdoor",material:[...MAT_OPTS]});
   const [loading,setLoading]=useState(false);
   const [plan,setPlan]=useState(null);
   const [error,setError]=useState("");
   const [saved,setSaved]=useState([]);
+  const [view,setView]=useState("config"); // config | plan | detail | replace
+  const [detailEx,setDetailEx]=useState(null);
+  const [replaceTarget,setReplaceTarget]=useState(null); // {phaseIdx,stationIdx,category}
+  const [hasDraft,setHasDraft]=useState(false);
   const set=(k,v)=>setCfg(c=>({...c,[k]:v}));
   const togMat=m=>set("material",cfg.material.includes(m)?cfg.material.filter(x=>x!==m):[...cfg.material,m]);
+
+  useEffect(()=>{
+    db.kv.get("aiPlanDraft").then(row=>{
+      if(row?.value){const d=JSON.parse(row.value);if(d.plan){setPlan(d.plan);setView("plan");setHasDraft(true);}if(d.cfg)setCfg(c=>({...c,...d.cfg}));}
+    }).catch(()=>{});
+  },[]);
+
+  const saveDraft=(p,c)=>db.kv.put({key:"aiPlanDraft",value:JSON.stringify({plan:p,cfg:c,savedAt:now()})}).catch(()=>{});
+  const clearDraft=()=>db.kv.delete("aiPlanDraft").catch(()=>{});
 
   const SYS=`Du bist erfahrener G-Jugend (U7) Trainer in Hamburg (HFV). Erstelle einen praxistauglichen, altersgerechten Trainingsplan.
 
 TYPISCHE STRUKTUR (60 Min – skaliere proportional):
 1. Ankommen & Freies Spiel (10 Min): Kinder spielen frei, kein Trainer-Input. Trainer bauen parallel auf.
-2. Aufwärmspiel (10-15 Min): Ein Bewegungsspiel mit allen Kindern. Einfache Regeln, viel Laufen, Ball dabei wenn möglich.
+2. Aufwärmspiel (10-15 Min): Bewegungsspiel mit allen Kindern. Einfache Regeln, viel Laufen.
 3. Hauptteil (25-30 Min): Wähle je nach Trainer/Kind-Verhältnis (s.u.).
-4. Abschluss (5-10 Min): Freies Spiel oder Abschlussspielform.
+4. Abschluss (5-10 Min): Freies Spiel oder kurzes Abschlussspiel.
 
-HAUPTTEIL-STRATEGIEN – wähle die passende:
-A) STATIONEN+ROTATION (bevorzugt bei ≥2 Trainern): Teams à 3-4 Kinder. N Trainer = N parallele Stationen. Rotation alle 5-10 Min. Beschreibe exakt: "Team 1→Station 2, Team 2 spielt gegen Team 3". Gleich starke Teams wenn möglich zusammen. Wenn Gruppen sehr ungleich: getrennt halten.
-B) ÜBUNG+SPIELFORM parallel: 1-2 Trainer machen Technikübung mit je 1-2 Teams, 1 Trainer betreut Spielform mit restlichen Teams.
-C) ROUND ROBIN: Alle Teams spielen Kurzspiele gegeneinander (z.B. 2x5 Min). Gut als Abschluss oder wenn viele Trainer da sind.
-D) NUR SPIELEN: Alle Kinder spielen, 1 Trainer pro Feld. Gut zur Abwechslung oder bei wenig Zeit.
-E) GEMEINSAM: Alle Kinder + alle Trainer bei gleicher Übung (nur für Aufwärmen geeignet).
+HAUPTTEIL-STRATEGIEN:
+A) STATIONEN+ROTATION (bevorzugt bei ≥2 Trainern): Teams à 3-4. N Trainer = N Stationen. Rotation alle 5-10 Min. Beschreibe exakt: "Team 1→Station 2, Team 2 spielt gegen Team 3". Gleich starke Teams zusammen wenn möglich.
+B) ÜBUNG+SPIELFORM parallel: 1-2 Trainer Technikübung mit je 1-2 Teams, 1 Trainer Spielform.
+C) ROUND ROBIN: Kurzspiele gegeneinander. Ideal als Abschluss.
+D) NUR SPIELEN: Alle spielen, 1 Trainer pro Feld. Gut zur Abwechslung.
 
-ROTATIONS-LOGIK: Bei 3 Trainern und 16 Kindern z.B.: 4 Teams à 4. Trainer 1 → Übung mit Teams 1+2, Trainer 2 → andere Übung mit Teams 3+4, Trainer 3 → Spielform. Nach 8 Min: Team 1 zu Trainer 2, Team 2 spielt gegen Team 3, Teams 3+4 zu Trainer 1.
+ROTATIONS-BEISPIEL (3 Trainer, 16 Kinder): 4 Teams à 4. Trainer 1 → Übung A mit Teams 1+2. Trainer 2 → Übung B mit Teams 3+4. Trainer 3 → Spielform. Nach 8 Min: Team 1→Trainer 2, Team 2 spielt vs. Team 3, Team 4→Trainer 1.
 
-G-JUGEND REGELN: Kein Torhüter. Minitore oder Hütchentore. Spielformen 2v2/3v3/4v4. Max 3 Sätze Ansage. Spaß und Bewegung vor Technik.
-PRINZIPIEN: Kein Kind steht >2 Min. Einfacher Plan > komplexer Plan (Chaos vermeiden). Nur verfügbares Material nutzen. Kurze Übergänge planen.
+G-JUGEND: Kein Torhüter. Minitore/Hütchentore. 2v2/3v3/4v4. Max 3 Sätze Ansage. Spaß > Perfektion.
+PRINZIPIEN: Kein Kind >2 Min Leerlauf. Einfach > komplex. Nur verfügbares Material. Kurze Übergänge.
 
-Nutze Übungen aus der Bibliothek wenn verfügbar. Wenn du eigene Übungen erfindest, liste sie unter newExercises damit der Trainer sie speichern kann.
+Nutze Übungen aus der Bibliothek wenn verfügbar. Eigene erfundene Übungen unter newExercises auflisten.
 
-Antworte NUR mit JSON (kein Text davor/danach):
-{"title":"","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","material":[],"tips":"","stations":[{"label":"","teams":[""],"exercise":"","description":"","material":[]}],"rotationMinutes":0}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[]}]}`;
+Antworte NUR mit JSON:
+{"title":"","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","exerciseTitle":"","material":[],"tips":"","stations":[{"label":"","teams":[""],"exercise":"","description":"","setup":"","material":[]}],"rotationMinutes":0}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[]}]}`;
 
   const generate=async()=>{
     setLoading(true);setError("");
-    const lib=cfg.useLib&&exercises.length>0?`\nBibliothek (nutze diese wenn passend):\n${exercises.slice(0,15).map(e=>`- "${e.title}" (${CATS[e.category]?.label}, ${e.duration}min${e.material?.length?`, Material: ${e.material.join(",")}`:""})` ).join("\n")}`:"";
-    const msg=`Trainingsplan: ${cfg.kids} Kinder, ${cfg.coaches} Trainer, ${cfg.duration} Min, ${cfg.location==="indoor"?"Indoor (Halle)":"Outdoor"}${cfg.material.length?`, verfügbares Material: ${cfg.material.join(", ")}`:""}${cfg.focus?`, Schwerpunkt: ${cfg.focus}`:""}${lib}`;
-    try{const r=await callClaude([{role:"user",content:msg}],apiKey,SYS);const d=parseJsonSafe(r);if(!d?.phases)throw new Error("Ungültige Antwort – bitte erneut versuchen");setPlan(d);}catch(e){setError(e.message);}setLoading(false);
+    const lib=cfg.useLib&&exercises.length>0?`\nBibliothek:\n${exercises.slice(0,15).map(e=>`- "${e.title}" (${CATS[e.category]?.label}, ${e.duration}min${e.material?.length?`, Mat: ${e.material.join(",")}`:""})` ).join("\n")}`:"";
+    const msg=`${cfg.kids} Kinder, ${cfg.coaches} Trainer, ${cfg.duration} Min, ${cfg.location==="indoor"?"Indoor (Halle)":"Outdoor"}. Material: ${cfg.material.join(", ") || "–"}${cfg.focus?`. Schwerpunkt: ${cfg.focus}`:""}${lib}`;
+    try{
+      const r=await callClaude([{role:"user",content:msg}],apiKey,SYS);
+      const d=parseJsonSafe(r);
+      if(!d?.phases)throw new Error("Ungültige Antwort – bitte erneut versuchen");
+      setPlan(d);setView("plan");saveDraft(d,cfg);
+    }catch(e){setError(e.message);}
+    setLoading(false);
+  };
+
+  const findLib=title=>exercises.find(e=>e.title?.toLowerCase()===title?.toLowerCase());
+
+  const openDetail=(title,desc,setup,mat,cat,tips)=>{
+    const lib=findLib(title);
+    setDetailEx(lib||{title:title||"",description:desc||"",setup:setup||"",material:mat||[],category:cat||"technik",tips:tips||"",id:null});
+    setView("detail");
+  };
+
+  const openReplace=(phaseIdx,stationIdx,category)=>{setReplaceTarget({phaseIdx,stationIdx,category});setView("replace");};
+
+  const doReplace=ex=>{
+    if(!replaceTarget)return;
+    const {phaseIdx,stationIdx}=replaceTarget;
+    setPlan(p=>{
+      const phases=p.phases.map((ph,i)=>{
+        if(i!==phaseIdx)return ph;
+        if(stationIdx!=null){
+          const stations=(ph.stations||[]).map((st,j)=>j!==stationIdx?st:{...st,exercise:ex.title,description:ex.description||"",setup:ex.setup||"",material:ex.material||[]});
+          return {...ph,stations};
+        }
+        return {...ph,exerciseTitle:ex.title,description:ex.description||ph.description,setup:ex.setup||ph.setup,material:ex.material||ph.material};
+      });
+      const np={...p,phases};saveDraft(np,cfg);return np;
+    });
+    setView("plan");setReplaceTarget(null);
+  };
+
+  const getExIds=()=>{
+    const ids=new Set();
+    plan?.phases?.forEach(ph=>{
+      if(ph.stations){ph.stations.forEach(st=>{const e=findLib(st.exercise);if(e)ids.add(e.id);});}
+      else{const e=findLib(ph.exerciseTitle);if(e)ids.add(e.id);}
+    });
+    return[...ids];
+  };
+
+  const saveAsTraining=()=>{
+    if(!onSaveSession)return;
+    onSaveSession({id:uid(),createdAt:now(),date:todayISO(),duration:cfg.duration,location:cfg.location==="indoor"?"Halle":"",weather:"",participantCount:String(cfg.kids),coachIds:[],playerIds:[],exerciseIds:getExIds(),teams:[],notes:plan.title+(plan.generalTips?`\n💡 ${plan.generalTips}`:"")});
+    clearDraft();onClose();
   };
 
   const phBg={free:"#f8fafc",warmup:"#fff7ed",stations:"#f0fdf4",game:"#eff6ff",exercise:"#f5f3ff"};
   const phEmoji={free:"⚽",warmup:"🔥",stations:"🔄",game:"🏆",exercise:"🎯"};
+  const ReplBtn=({onClick})=><button onClick={onClick} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",fontSize:11,color:C.muted,padding:"2px 8px",fontFamily:"inherit",flexShrink:0,whiteSpace:"nowrap"}}>🔄 Ersetzen</button>;
+  const ExLink=({title,desc,setup,mat,cat,tips})=>title?<button onClick={()=>openDetail(title,desc,setup,mat,cat,tips)} style={{fontWeight:700,fontSize:13,color:C.primary,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline",textAlign:"left"}}>{title}{findLib(title)?" 📚":""}</button>:null;
 
-  if(plan) return(<div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
-      <h3 style={{margin:0,fontWeight:800,color:C.text}}>{plan.title}</h3>
-      <span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalDuration} Min</span>
+  // ── DETAIL VIEW ────────────────────────────────────────────────────
+  if(view==="detail"&&detailEx) return(<div>
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+      <Btn sm variant="secondary" onClick={()=>setView("plan")}>← Plan</Btn>
+      {detailEx.category&&<CatBadge cat={detailEx.category}/>}
+      {!detailEx.id&&<span style={{fontSize:11,color:C.muted,padding:"2px 8px",background:"#faf5ff",borderRadius:20,border:"1px solid #e9d5ff"}}>🤖 KI-Übung</span>}
     </div>
-    {plan.teams?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
-      {plan.teams.map((t,i)=><span key={i} style={{padding:"3px 10px",borderRadius:20,background:TCOLORS[i%TCOLORS.length]+"22",color:TCOLORS[i%TCOLORS.length],fontSize:12,fontWeight:700,border:`1.5px solid ${TCOLORS[i%TCOLORS.length]}55`}}>{t.name} ({t.size} 👦)</span>)}
+    <h3 style={{margin:"0 0 14px",fontWeight:800,color:C.text,fontSize:17}}>{detailEx.title}</h3>
+    {detailEx.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,color:C.text,lineHeight:1.6,border:`1px solid ${C.border}`}}>{detailEx.setup}</div></div>}
+    {detailEx.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,color:C.text,lineHeight:1.6,border:`1px solid ${C.border}`}}>{detailEx.description}</div></div>}
+    {detailEx.tips&&<div style={{marginBottom:12,background:"#faf5ff",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#6d28d9",border:"1px solid #e9d5ff"}}>💡 {detailEx.tips}</div>}
+    {detailEx.material?.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>📦 Material</div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{detailEx.material.map(m=><span key={m} style={{padding:"4px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div></div>}
+    {detailEx.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{detailEx.tags.map(t=><span key={t} style={{padding:"3px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}</div>}
+    {detailEx.notes&&<div style={{marginTop:12,fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {detailEx.notes}</div>}
+    <div style={{marginTop:20,paddingTop:16,borderTop:`1px solid ${C.border}`,display:"flex",gap:8,justifyContent:"flex-end"}}>
+      <Btn sm variant="secondary" onClick={()=>setView("plan")}>← Zurück zum Plan</Btn>
+    </div>
+  </div>);
+
+  // ── REPLACE VIEW ───────────────────────────────────────────────────
+  if(view==="replace"&&replaceTarget){
+    const cat=replaceTarget.category;
+    const pool=exercises.filter(e=>!cat||e.category===cat);
+    const all=pool.length>0?pool:exercises;
+    return(<div>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+        <Btn sm variant="secondary" onClick={()=>setView("plan")}>← Plan</Btn>
+        <span style={{fontWeight:700,color:C.text}}>Übung ersetzen</span>
+        {cat&&<CatBadge cat={cat} small/>}
+      </div>
+      {all.length===0?<div style={{textAlign:"center",padding:"30px 0",color:C.muted,fontSize:14}}>Keine Übungen in der Bibliothek.<br/>Füge zuerst Übungen in der Bibliothek hinzu.</div>:
+        <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:420,overflowY:"auto"}}>
+          {all.map(ex=><div key={ex.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:2}}><span style={{fontWeight:700,fontSize:13,color:C.text}}>{ex.title}</span><CatBadge cat={ex.category} small/></div>
+              {ex.description&&<div style={{fontSize:12,color:C.muted,lineHeight:1.4}}>{ex.description.slice(0,90)}{ex.description.length>90?"…":""}</div>}
+            </div>
+            <Btn sm onClick={()=>doReplace(ex)}>Verwenden</Btn>
+          </div>)}
+        </div>}
+    </div>);
+  }
+
+  // ── PLAN VIEW ──────────────────────────────────────────────────────
+  if(plan&&view==="plan") return(<div>
+    {hasDraft&&<div style={{background:"#fffbeb",borderRadius:8,padding:"8px 12px",marginBottom:12,border:"1px solid #fde68a",fontSize:12,color:"#92400e",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <span>📋 Entwurf wiederhergestellt</span>
+      <button onClick={()=>{setPlan(null);setView("config");clearDraft();setHasDraft(false);}} style={{background:"none",border:"none",cursor:"pointer",color:"#dc2626",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>✕ Verwerfen</button>
+    </div>}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
+      <h3 style={{margin:0,fontWeight:800,color:C.text,fontSize:16}}>{plan.title}</h3>
+      <span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalDuration} Min · {cfg.location==="indoor"?"🏠 Halle":"☀️ Outdoor"}</span>
+    </div>
+    {plan.teams?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+      {plan.teams.map((t,i)=><span key={i} style={{padding:"3px 10px",borderRadius:20,background:TCOLORS[i%TCOLORS.length]+"22",color:TCOLORS[i%TCOLORS.length],fontSize:12,fontWeight:700,border:`1.5px solid ${TCOLORS[i%TCOLORS.length]}55`}}>{t.name} ({t.size}👦)</span>)}
     </div>}
     <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:14}}>
       {plan.phases.map((ph,i)=>{
         const bg=phBg[ph.type]||"#f8fafc";
-        const emoji=phEmoji[ph.type]||"📋";
+        const em=phEmoji[ph.type]||"📋";
+        const catForReplace=ph.type==="warmup"?"aufwaermen":ph.type==="game"?"spielform":ph.type==="exercise"?"technik":null;
         return(<div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
-          <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{fontWeight:800,fontSize:14,color:C.text}}>{emoji} {ph.name}</div>
-            <div style={{fontSize:12,color:C.muted,fontWeight:600}}>⏱ {ph.duration} Min</div>
+          <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:6}}>
+            <div style={{fontWeight:800,fontSize:14,color:C.text}}>{em} {ph.name}</div>
+            <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+              <span style={{fontSize:12,color:C.muted,fontWeight:600}}>⏱ {ph.duration}m</span>
+              {ph.type!=="free"&&ph.type!=="stations"&&<ReplBtn onClick={()=>openReplace(i,null,catForReplace)}/>}
+            </div>
           </div>
           <div style={{padding:"10px 14px"}}>
-            {ph.description&&<div style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:6}}>{ph.description}</div>}
-            {ph.setup&&<div style={{fontSize:12,color:C.muted,background:"#f8fafc",borderRadius:6,padding:"6px 10px",marginBottom:8}}>📐 {ph.setup}</div>}
-            {ph.stations?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:6}}>
-              {ph.rotationMinutes>0&&<div style={{fontSize:12,color:"#7c3aed",fontWeight:700,marginBottom:2}}>🔄 Rotation alle {ph.rotationMinutes} Min</div>}
+            {ph.exerciseTitle&&<div style={{marginBottom:4}}><ExLink title={ph.exerciseTitle} desc={ph.description} setup={ph.setup} mat={ph.material} cat={ph.type} tips={ph.tips}/></div>}
+            {ph.description&&<div style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:6,opacity:ph.exerciseTitle?0.7:1}}>{ph.description}</div>}
+            {ph.setup&&<div style={{fontSize:12,color:C.muted,background:"#f8fafc",borderRadius:6,padding:"6px 10px",marginBottom:6}}>📐 {ph.setup}</div>}
+            {ph.stations?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:4}}>
+              {ph.rotationMinutes>0&&<div style={{fontSize:12,color:"#7c3aed",fontWeight:700}}>🔄 Rotation alle {ph.rotationMinutes} Min</div>}
               {ph.stations.map((st,j)=><div key={j} style={{borderRadius:8,border:`1px solid ${C.border}`,padding:"8px 12px",background:"white"}}>
-                <div style={{fontWeight:700,fontSize:13,color:C.primary,marginBottom:2}}>{st.label}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6,marginBottom:3}}>
+                  <div style={{fontWeight:700,fontSize:13,color:C.primary}}>{st.label}</div>
+                  <ReplBtn onClick={()=>openReplace(i,j,"technik")}/>
+                </div>
                 {st.teams?.length>0&&<div style={{fontSize:11,color:C.muted,marginBottom:3}}>👦 {st.teams.join(" · ")}</div>}
-                {st.exercise&&<div style={{fontSize:13,color:C.text,fontWeight:600}}>{st.exercise}</div>}
+                <ExLink title={st.exercise} desc={st.description} setup={st.setup} mat={st.material} cat="technik" tips=""/>
                 {st.description&&<div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginTop:2}}>{st.description}</div>}
                 {st.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:4}}>{st.material.map(m=><span key={m} style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
               </div>)}
@@ -327,16 +452,16 @@ Antworte NUR mit JSON (kein Text davor/danach):
         </div>);
       })}
     </div>
-    {plan.generalTips&&<div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9",marginBottom:14}}><strong>💡 </strong>{plan.generalTips}</div>}
-    {plan.newExercises?.filter(ex=>ex.title).length>0&&<div style={{marginBottom:14}}>
-      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>🆕 Neue Übungen – in Bibliothek speichern</div>
+    {plan.generalTips&&<div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9",marginBottom:12}}><strong>💡 </strong>{plan.generalTips}</div>}
+    {plan.newExercises?.filter(ex=>ex.title).length>0&&<div style={{marginBottom:12}}>
+      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>🆕 Neue Übungen speichern</div>
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {plan.newExercises.filter(ex=>ex.title).map((ex,i)=>{
           const isSaved=saved.includes(i);
-          return(<div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${isSaved?"#22c55e":C.border}`,background:isSaved?"#f0fdf4":"white",flexWrap:"wrap"}}>
+          return(<div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${isSaved?"#22c55e":C.border}`,background:isSaved?"#f0fdf4":"white",flexWrap:"wrap"}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:13,color:C.text}}>{ex.title}</span><CatBadge cat={ex.category} small/></div>
-              {ex.description&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{ex.description.slice(0,90)}{ex.description.length>90?"…":""}</div>}
+              {ex.description&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{ex.description.slice(0,80)}{ex.description.length>80?"…":""}</div>}
             </div>
             {isSaved?<span style={{fontSize:12,color:"#16a34a",fontWeight:700,flexShrink:0}}>✅ Gespeichert</span>:
               onSaveEx&&<Btn sm onClick={()=>{onSaveEx({...ex,id:uid(),createdAt:now(),updatedAt:now(),rating:3,imageUrl:"",source:"KI-Trainingsplan",notes:ex.notes||""});setSaved(s=>[...s,i]);}}><Plus size={12}/> Speichern</Btn>}
@@ -344,18 +469,19 @@ Antworte NUR mit JSON (kein Text davor/danach):
         })}
       </div>
     </div>}
-    <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
-      <Btn onClick={()=>{setPlan(null);setSaved([]);}} variant="secondary"><RefreshCw size={14}/> Neu generieren</Btn>
-      <Btn onClick={onClose}>Schließen</Btn>
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap",paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+      <Btn onClick={()=>{setPlan(null);setView("config");}} variant="secondary"><RefreshCw size={14}/> Neu generieren</Btn>
+      {onSaveSession&&<Btn onClick={saveAsTraining}><CalendarDays size={14}/> Als Training speichern</Btn>}
     </div>
   </div>);
 
+  // ── CONFIG VIEW ────────────────────────────────────────────────────
   return(<div>
-    <div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9"}}>🤖 KI plant Stationen, Rotation und Spielzeit – optimiert für deine Trainer- und Kinderzahl.</div>
+    <div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9"}}>🤖 KI plant Stationen, Rotation und Spielzeit – optimiert für Trainer- und Kinderzahl. Plan wird automatisch als Entwurf gespeichert.</div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
-      <Inp label="Kinder heute" type="number" value={cfg.kids} onChange={e=>set("kids",Number(e.target.value))} min={4} style={{marginBottom:0}}/>
-      <Inp label="Trainer" type="number" value={cfg.coaches} onChange={e=>set("coaches",Number(e.target.value))} min={1} style={{marginBottom:0}}/>
-      <Inp label="Minuten" type="number" value={cfg.duration} onChange={e=>set("duration",Number(e.target.value))} min={20} style={{marginBottom:0}}/>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder</label><Stepper value={cfg.kids} onChange={v=>set("kids",v)} min={4} max={30}/></div>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Trainer</label><Stepper value={cfg.coaches} onChange={v=>set("coaches",v)} min={1} max={6}/></div>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Minuten</label><Stepper value={cfg.duration} onChange={v=>set("duration",v)} min={20} max={120}/></div>
     </div>
     <div style={{marginBottom:14}}>
       <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Ort</label>
@@ -364,7 +490,7 @@ Antworte NUR mit JSON (kein Text davor/danach):
       </div>
     </div>
     <div style={{marginBottom:14}}>
-      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Verfügbares Material</label>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Verfügbares Material <span style={{fontSize:11,fontWeight:400,textTransform:"none"}}>– abwählen was fehlt</span></label>
       <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
         {MAT_OPTS.map(m=>{const on=cfg.material.includes(m);return<button key={m} onClick={()=>togMat(m)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${on?C.primary:C.border}`,background:on?C.accentL:"white",color:on?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>📦 {m}</button>;})}
       </div>
@@ -1057,7 +1183,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
         <Btn onClick={()=>setModal({type:"notfall"})} style={{background:"#dc2626",color:"white"}} sm><AlertTriangle size={14}/> SOS</Btn>
         <Btn onClick={()=>setModal({type:"manual"})} variant="secondary" sm><ListChecks size={14}/> Manuell planen</Btn>
         <Btn onClick={()=>setModal({type:"ai"})} variant="ai" sm><Bot size={14}/> KI-Plan</Btn>
-        <Btn onClick={()=>setModal({type:"session",data:null})}><Plus size={16}/> Protokoll</Btn>
+        <Btn onClick={()=>setModal({type:"session",data:null})}><Plus size={16}/> Training eintragen</Btn>
       </div>
     </div>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content"}}>{tb("history","Verlauf")}{tb("teams","Teambildung")}</div>
@@ -1069,7 +1195,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
             <div style={{display:"flex",gap:6}}><Btn sm variant="secondary" onClick={()=>setModal({type:"tb",data:{session:s,players:pr.length?pr:players.filter(p=>p.active)}})}><Shuffle size={13}/> Teams</Btn><Btn sm variant="secondary" onClick={()=>setModal({type:"session",data:s})}><Edit2 size={13}/></Btn><Btn sm variant="danger" onClick={()=>onDeleteSession(s.id)}><Trash2 size={13}/></Btn></div>
           </div>
           {pr.length>0&&<div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:5}}>Anwesend</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{pr.map(p=><span key={p.id} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:STR[p.strength].light,color:STR[p.strength].color,fontWeight:600}}>{STR[p.strength].emoji} {p.name}</span>)}</div></div>}
-          {ex.length>0&&<div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:5}}>Übungen</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.map(e=><span key={e.id} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontWeight:600}}>{CATS[e.category]?.emoji} {e.title}</span>)}</div></div>}
+          {ex.length>0&&<div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:5}}>Übungen</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.map(e=><button key={e.id} onClick={()=>setModal({type:"exDetail",data:e})} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontWeight:600,border:"none",cursor:"pointer",fontFamily:"inherit"}}>{CATS[e.category]?.emoji} {e.title}</button>)}</div></div>}
           {s.teams?.length>0&&<div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:5}}>Teams</div><div style={{display:"flex",gap:10,flexWrap:"wrap"}}>{s.teams.map(t=><div key={t.id} style={{padding:"6px 12px",borderRadius:8,background:C.accentL,border:`1px solid ${C.accent}`}}><div style={{fontSize:12,fontWeight:700,color:C.primary}}>{t.name}</div><div style={{fontSize:11,color:C.muted}}>{t.players.map(p=>p.name).join(", ")}</div></div>)}</div></div>}
           {s.notes&&<div style={{marginTop:10,fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {s.notes}</div>}
         </div>);})}
@@ -1077,9 +1203,10 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
     {tab==="teams"&&<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:20}}><h2 style={{margin:"0 0 6px",fontSize:18,fontWeight:800}}>Schnelle Teambildung</h2><p style={{margin:"0 0 16px",color:C.muted,fontSize:14}}>Teams bilden ohne Training zu protokollieren.</p><Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={16}/> Teams zusammenstellen</Btn></div>}
     {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="manual"&&<Modal title="📋 Training manuell planen" onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
-    {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} onClose={()=>setModal(null)} onSaveEx={onSaveExercise}/></Modal>}
+    {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={teams=>{if(modal.data.session)onSaveSession({...modal.data.session,teams});setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="exDetail"&&modal.data&&<Modal title="Übungsdetail" onClose={()=>setModal(null)}><div><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}><CatBadge cat={modal.data.category}/><Stars value={modal.data.rating} readonly/><span style={{fontSize:13,color:C.muted,marginLeft:"auto"}}>⏱ {modal.data.duration} Min</span></div>{modal.data.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.setup}</div></div>}{modal.data.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.description}</div></div>}{modal.data.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{modal.data.material.map(m=><span key={m} style={{padding:"3px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div>}{modal.data.notes&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {modal.data.notes}</div>}</div></Modal>}
   </div>);
 }
 
