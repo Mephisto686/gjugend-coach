@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.8.0";
+const APP_VERSION = "2.9.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -213,7 +213,7 @@ const calcStandings = (teams,matches) => {
 async function callClaude(messages,apiKey,system) {
   const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
   if(apiKey) headers["x-api-key"]=apiKey;
-  const body={model:"claude-sonnet-4-20250514",max_tokens:4000,messages};
+  const body={model:"claude-sonnet-4-20250514",max_tokens:messages[0]?.content?.length>500?4000:2000,messages};
   if(system) body.system=system;
   const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers,body:JSON.stringify(body)});
   if(!res.ok){const e=await res.json();throw new Error(e.error?.message||`Fehler ${res.status}`);}
@@ -335,30 +335,33 @@ function AITrainingModal({players,exercises,onClose,apiKey,onSaveEx,onSaveSessio
   const saveDraft=(p,c)=>db.kv.put({key:"aiPlanDraft",value:JSON.stringify({plan:p,cfg:c,savedAt:now()})}).catch(()=>{});
   const clearDraft=()=>db.kv.delete("aiPlanDraft").catch(()=>{});
 
-  const SYS=`Du bist erfahrener G-Jugend (U7) Trainer in Hamburg (HFV). Erstelle einen praxistauglichen, altersgerechten Trainingsplan.
+  const SYS=`Du bist erfahrener G-Jugend (U7) Trainer in Hamburg (HFV). Erstelle einen praxistauglichen Trainingsplan als strukturiertes BRIEFING – so klar, dass jeder Trainer sofort weiß was wann zu tun ist.
 
-TYPISCHE STRUKTUR (60 Min – skaliere proportional):
-1. Ankommen & Freies Spiel (10 Min): Kinder spielen frei, kein Trainer-Input. Trainer bauen parallel auf.
-2. Aufwärmspiel (10-15 Min): Bewegungsspiel mit allen Kindern. Einfache Regeln, viel Laufen.
-3. Hauptteil (25-30 Min): Wähle je nach Trainer/Kind-Verhältnis (s.u.).
-4. Abschluss (5-10 Min): Freies Spiel oder kurzes Abschlussspiel.
+TRAININGSSTRUKTUR (60 Min, skaliere proportional):
+1. ANKOMMEN (10 Min): Freies Spiel, kein Trainer-Input. Trainer nutzen diese Zeit um Stationen aufzubauen. Schreibe explizit: "Trainer bauen in dieser Zeit Station X auf."
+2. AUFWÄRMEN (10-15 Min): Alle zusammen, einfaches Bewegungsspiel.
+3. HAUPTTEIL (25-30 Min): Stationen/Gruppen/Spielformen.
+4. ABSCHLUSS (5-10 Min): Freies Spiel oder kurze Spielform.
 
-HAUPTTEIL-STRATEGIEN:
-A) STATIONEN+ROTATION (bevorzugt bei ≥2 Trainern): Teams à 3-4. N Trainer = N Stationen. Rotation alle 5-10 Min. Beschreibe exakt: "Team 1→Station 2, Team 2 spielt gegen Team 3". Gleich starke Teams zusammen wenn möglich.
-B) ÜBUNG+SPIELFORM parallel: 1-2 Trainer Technikübung mit je 1-2 Teams, 1 Trainer Spielform.
-C) ROUND ROBIN: Kurzspiele gegeneinander. Ideal als Abschluss.
-D) NUR SPIELEN: Alle spielen, 1 Trainer pro Feld. Gut zur Abwechslung.
+HAUPTTEIL – wähle passende Strategie:
+A) STATIONEN+ROTATION (≥2 Trainer): Beschreibe exakt: "Team 1 (4 Kinder) → Station A mit Trainer 1. Team 2 (4 Kinder) → Station B mit Trainer 2. Team 3+4 spielen auf Feld C ohne Trainer. Nach 8 Min: Pfiff → Team 1 geht zu B, Team 2 zu C, Team 3+4 zu A."
+B) PARALLEL: Teile in zwei Gruppen, jede hat eigene Aufgabe.
+C) ALLE ZUSAMMEN: Alle machen gleichzeitig dasselbe.
+D) ROUND ROBIN: Kurze Spiele, jeder gegen jeden.
 
-ROTATIONS-BEISPIEL (3 Trainer, 16 Kinder): 4 Teams à 4. Trainer 1 → Übung A mit Teams 1+2. Trainer 2 → Übung B mit Teams 3+4. Trainer 3 → Spielform. Nach 8 Min: Team 1→Trainer 2, Team 2 spielt vs. Team 3, Team 4→Trainer 1.
+FÜR JEDE PHASE schreibe:
+- Was passiert genau (Schritt für Schritt)
+- Wer macht was (welches Team, welcher Trainer)
+- Wann und wie rotiert wird (exakte Ansage: "Pfiff nach 8 Min: Team 1 rückt zu Station 2")
+- Was Trainer parallel aufbauen sollen
+- Wie viele Kinder wo aktiv sind
 
-G-JUGEND: Kein Torhüter. Minitore/Hütchentore. 2v2/3v3/4v4. Max 3 Sätze Ansage. Spaß > Perfektion.
-PRINZIPIEN: Kein Kind >2 Min Leerlauf. Einfach > komplex. Nur verfügbares Material. Kurze Übergänge.
+G-JUGEND: Kein Torwart. Minitore/Hütchentore. 2v2 bis 4v4. Max 3 Sätze Ansage. Spaß > Perfektion. Nie >2 Min Leerlauf.
 
-Nutze Übungen aus der Bibliothek wenn verfügbar. Eigene erfundene Übungen unter newExercises auflisten.
-Für NEUE Übungen gilt: Beschreibe sie so detailliert, dass ein Trainer sie ohne Vorkenntnisse sofort aufbauen und erklären kann. Pflichtfelder: setup (konkreter Aufbau mit Feldmaß, Hütchenanzahl, Abständen), description (Schritt-für-Schritt Ablauf, 5–8 Sätze), coachingPoints (3 konkrete Trainertipps), variante (eine einfachere und eine schwerere Variante), playerCount (wie viele Kinder wo, z.B. "3 Kinder pro Station"). Zusätzlich für jede neue Übung ein sketchPrompt-Feld: ein kurzer englischer Bildgenerator-Prompt der die Übungsskizze beschreibt (z.B. "top-down football training diagram, children as circles, cones as triangles, arrows showing movement direction, clean white background").
+Nutze Bibliotheksübungen wenn verfügbar. Neue Übungen detailliert unter newExercises mit sketchPrompt.
 
 Antworte NUR mit JSON:
-{"title":"","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","exerciseTitle":"","material":[],"tips":"","playerDistribution":"z.B. 4 Kinder an Station 1 mit Trainer, 8 spielen gegeneinander","minCoaches":1,"rotationMinutes":0,"stations":[{"label":"","teams":[""],"exercise":"","description":"","setup":"","playerCount":"","trainerNeeded":false,"material":[]}]}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[],"coachingPoints":[],"variante":{"leichter":"","schwerer":""},"playerCount":"","sketchPrompt":""}]}`;
+{"title":"","briefing":"Kurze Zusammenfassung des Trainings in 2 Sätzen für alle Trainer","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","exerciseTitle":"","material":[],"tips":"","playerDistribution":"","minCoaches":1,"rotationMinutes":0,"rotationInstruction":"z.B. Nach 8 Min Pfiff: Team 1→Station 2, Team 2→Station 3, Team 3→Station 1","trainerTask":"Was Trainer in dieser Phase parallel tun sollen (z.B. Station aufbauen)","stations":[{"label":"","teams":[""],"exercise":"","description":"","setup":"","playerCount":"","trainerNeeded":false,"material":[]}]}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[],"coachingPoints":[],"variante":{"leichter":"","schwerer":""},"playerCount":"","sketchPrompt":""}]}`;
 
   const generate=async()=>{
     setLoading(true);setError("");
@@ -473,6 +476,7 @@ Antworte NUR mit JSON:
       <h3 style={{margin:0,fontWeight:800,color:C.text,fontSize:16}}>{plan.title}</h3>
       <span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalDuration} Min · {cfg.location==="indoor"?"🏠 Halle":"☀️ Outdoor"}</span>
     </div>
+    {plan.briefing&&<div style={{background:"#f0fdf4",borderRadius:10,padding:"10px 14px",marginBottom:12,border:"1px solid #bbf7d0",fontSize:14,color:"#15803d",fontWeight:600,lineHeight:1.5}}>📋 {plan.briefing}</div>}
     {plan.teams?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
       {plan.teams.map((t,i)=><span key={i} style={{padding:"3px 10px",borderRadius:20,background:TCOLORS[i%TCOLORS.length]+"22",color:TCOLORS[i%TCOLORS.length],fontSize:12,fontWeight:700,border:`1.5px solid ${TCOLORS[i%TCOLORS.length]}55`}}>{t.name} ({t.size}👦)</span>)}
     </div>}
@@ -509,6 +513,8 @@ Antworte NUR mit JSON:
             </div>}
             {ph.material?.length>0&&!ph.stations?.length&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:4}}>{ph.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
             {ph.playerDistribution&&<div style={{fontSize:12,background:"#f0f9ff",borderRadius:6,padding:"5px 10px",marginTop:4,color:"#0369a1",fontWeight:600}}>👥 {ph.playerDistribution}{ph.minCoaches>0?` · 🧑‍🏫 min. ${ph.minCoaches} Trainer`:""}</div>}
+            {ph.rotationInstruction&&<div style={{fontSize:12,background:"#fef9c3",borderRadius:6,padding:"6px 10px",marginTop:4,color:"#92400e",fontWeight:600,lineHeight:1.5}}>🔄 {ph.rotationInstruction}</div>}
+            {ph.trainerTask&&<div style={{fontSize:12,background:"#faf5ff",borderRadius:6,padding:"5px 10px",marginTop:4,color:"#6d28d9",fontWeight:600}}>🧑‍🏫 Trainer: {ph.trainerTask}</div>}
             {ph.tips&&<div style={{fontSize:12,color:"#7c3aed",fontStyle:"italic",marginTop:4}}>💡 {ph.tips}</div>}
           </div>
         </div>);
@@ -1474,10 +1480,13 @@ function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose}) {
   const togC=id=>s("coachIds",setup.coachIds.includes(id)?setup.coachIds.filter(x=>x!==id):[...setup.coachIds,id]);
   return(<div>
     <div style={{background:"#f0fdf4",borderRadius:10,padding:"10px 14px",marginBottom:16,border:"1px solid #bbf7d0",fontSize:13,color:"#15803d"}}>Gib die Eckdaten ein – dann wähle Manuell oder KI-Plan.</div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
-      <Inp label="Datum" type="date" value={setup.date} onChange={e=>s("date",e.target.value)} style={{marginBottom:0}}/>
-      <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
-        {[["outdoor","☀️ Outdoor"],["indoor","🏠 Halle"]].map(([k,l])=><button key={k} onClick={()=>s("location",k)} style={{flex:1,height:38,borderRadius:8,border:`2px solid ${setup.location===k?C.primary:C.border}`,background:setup.location===k?C.accentL:"white",color:setup.location===k?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit"}}>{l}</button>)}
+    <div style={{marginBottom:14}}>
+      <Inp label="Datum" type="date" value={setup.date} onChange={e=>s("date",e.target.value)}/>
+      <div>
+        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Ort</label>
+        <div style={{display:"flex",gap:8}}>
+          {[["outdoor","☀️ Outdoor"],["indoor","🏠 Halle"]].map(([k,l])=><button key={k} onClick={()=>s("location",k)} style={{flex:1,padding:"9px 8px",borderRadius:8,border:`2px solid ${setup.location===k?C.primary:C.border}`,background:setup.location===k?C.accentL:"white",color:setup.location===k?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>{l}</button>)}
+        </div>
       </div>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
@@ -1527,10 +1536,12 @@ function TournamentForm({onSave,onClose}) {
   const addTeam=()=>setTeams(t=>[...t,{id:uid(),name:`Team ${t.length+1}`,color:TCOLORS[t.length%TCOLORS.length]}]);
   return(<div>
     <Inp label="Turniername *" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="z.B. Herbstturnier"/>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
-      <Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{marginBottom:0}}/>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Spieldauer (Min)</label><Stepper value={form.matchDuration} onChange={v=>set("matchDuration",v)} min={3} max={30}/></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Felder</label><Stepper value={form.fields} onChange={v=>set("fields",v)} min={1} max={6}/></div>
+    <div style={{marginBottom:14}}>
+      <Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Spieldauer (Min)</label><Stepper value={form.matchDuration} onChange={v=>set("matchDuration",v)} min={3} max={30}/></div>
+        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Felder</label><Stepper value={form.fields} onChange={v=>set("fields",v)} min={1} max={6}/></div>
+      </div>
     </div>
     <div style={{marginTop:14,marginBottom:14}}>
       <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Teams ({teams.length})</label>
