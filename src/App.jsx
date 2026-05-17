@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.8.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -162,9 +162,9 @@ const parseCsvPlayers = text=>{ const ls=text.trim().split("\n");if(ls.length<2)
 // → Fisher-Yates Shuffle löst das
 const shuffle = arr => { const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
 
-function buildTeams(players,perTeam,mode) {
-  if(!players.length||!perTeam) return [];
-  const n=Math.max(1,Math.floor(players.length/perTeam));
+function buildTeams(players,numTeams,mode,skillDist) {
+  if(!players.length||!numTeams) return [];
+  const n=Math.max(1,numTeams);
   const teams=Array.from({length:n},(_,i)=>({id:uid(),name:`Team ${i+1}`,players:[]}));
   if(mode==="balanced") {
     shuffle(players).sort((a,b)=>b.strength-a.strength).forEach((p,i)=>{ const r=Math.floor(i/n);teams[r%2===0?i%n:n-1-(i%n)].players.push(p); });
@@ -172,6 +172,15 @@ function buildTeams(players,perTeam,mode) {
     [4,3,2,1].forEach(s=>shuffle(players.filter(p=>p.strength===s)).forEach((p,i)=>teams[i%n].players.push(p)));
   } else if(mode==="challenge") {
     shuffle(players).sort((a,b)=>b.strength-a.strength).forEach((p,i)=>teams[Math.min(n-1,Math.floor(i/Math.ceil(players.length/n)))].players.push(p));
+  } else if(mode==="skill"&&skillDist) {
+    const strong=shuffle(players.filter(p=>p.strength>=3));
+    const weak=shuffle(players.filter(p=>p.strength<=2));
+    const {strong:nS=0,weak:nW=0}=skillDist; const nM=n-nS-nW;
+    let ti=0;
+    for(let i=0;i<nS&&ti<n;i++){const t=teams[ti++];strong.splice(0,Math.max(1,Math.ceil(strong.length/(nS-i)))).forEach(p=>t.players.push(p));}
+    for(let i=0;i<nW&&ti<n;i++){const t=teams[ti++];weak.splice(0,Math.max(1,Math.ceil(weak.length/(nW-i)))).forEach(p=>t.players.push(p));}
+    const rest=shuffle([...strong,...weak]);
+    for(let i=0;i<nM&&ti<n;i++){const t=teams[ti++];rest.splice(0,Math.max(1,Math.ceil(rest.length/(nM-i)))).forEach(p=>t.players.push(p));}
   } else {
     shuffle(players).forEach((p,i)=>teams[i%n].players.push(p));
   }
@@ -179,7 +188,21 @@ function buildTeams(players,perTeam,mode) {
 }
 
 // ── TOURNAMENT HELPERS ────────────────────────────────────────────
-const generateRR = teams => { const m=[];for(let i=0;i<teams.length;i++)for(let j=i+1;j<teams.length;j++)m.push({id:uid(),homeId:teams[i].id,awayId:teams[j].id,homeScore:null,awayScore:null,played:false});return shuffle(m); };
+const generateRR = teams => {
+  const n=teams.length, list=teams.map(t=>t.id);
+  if(n%2===1) list.push(null);
+  const rounds=[];
+  for(let r=0;r<list.length-1;r++){
+    const round=[];
+    for(let i=0;i<list.length/2;i++){
+      const h=list[i],a=list[list.length-1-i];
+      if(h&&a) round.push({id:uid(),homeId:h,awayId:a,homeScore:null,awayScore:null,played:false});
+    }
+    rounds.push(round);
+    list.splice(1,0,list.pop());
+  }
+  return shuffle(rounds).flat();
+};
 const calcStandings = (teams,matches) => {
   const t=teams.map(x=>({...x,pl:0,w:0,d:0,l:0,gf:0,ga:0,pts:0}));
   matches.filter(m=>m.played).forEach(m=>{ const h=t.find(x=>x.id===m.homeId),a=t.find(x=>x.id===m.awayId);if(!h||!a)return;h.pl++;a.pl++;h.gf+=m.homeScore;h.ga+=m.awayScore;a.gf+=m.awayScore;a.ga+=m.homeScore;if(m.homeScore>m.awayScore){h.w++;h.pts+=3;a.l++;}else if(m.homeScore<m.awayScore){a.w++;a.pts+=3;h.l++;}else{h.d++;h.pts++;a.d++;a.pts++;} });
@@ -190,7 +213,7 @@ const calcStandings = (teams,matches) => {
 async function callClaude(messages,apiKey,system) {
   const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
   if(apiKey) headers["x-api-key"]=apiKey;
-  const body={model:"claude-sonnet-4-20250514",max_tokens:2000,messages};
+  const body={model:"claude-sonnet-4-20250514",max_tokens:4000,messages};
   if(system) body.system=system;
   const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers,body:JSON.stringify(body)});
   if(!res.ok){const e=await res.json();throw new Error(e.error?.message||`Fehler ${res.status}`);}
@@ -332,9 +355,10 @@ G-JUGEND: Kein Torhüter. Minitore/Hütchentore. 2v2/3v3/4v4. Max 3 Sätze Ansag
 PRINZIPIEN: Kein Kind >2 Min Leerlauf. Einfach > komplex. Nur verfügbares Material. Kurze Übergänge.
 
 Nutze Übungen aus der Bibliothek wenn verfügbar. Eigene erfundene Übungen unter newExercises auflisten.
+Für NEUE Übungen gilt: Beschreibe sie so detailliert, dass ein Trainer sie ohne Vorkenntnisse sofort aufbauen und erklären kann. Pflichtfelder: setup (konkreter Aufbau mit Feldmaß, Hütchenanzahl, Abständen), description (Schritt-für-Schritt Ablauf, 5–8 Sätze), coachingPoints (3 konkrete Trainertipps), variante (eine einfachere und eine schwerere Variante), playerCount (wie viele Kinder wo, z.B. "3 Kinder pro Station"). Zusätzlich für jede neue Übung ein sketchPrompt-Feld: ein kurzer englischer Bildgenerator-Prompt der die Übungsskizze beschreibt (z.B. "top-down football training diagram, children as circles, cones as triangles, arrows showing movement direction, clean white background").
 
 Antworte NUR mit JSON:
-{"title":"","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","exerciseTitle":"","material":[],"tips":"","stations":[{"label":"","teams":[""],"exercise":"","description":"","setup":"","material":[]}],"rotationMinutes":0}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[]}]}`;
+{"title":"","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","exerciseTitle":"","material":[],"tips":"","playerDistribution":"z.B. 4 Kinder an Station 1 mit Trainer, 8 spielen gegeneinander","minCoaches":1,"rotationMinutes":0,"stations":[{"label":"","teams":[""],"exercise":"","description":"","setup":"","playerCount":"","trainerNeeded":false,"material":[]}]}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[],"coachingPoints":[],"variante":{"leichter":"","schwerer":""},"playerCount":"","sketchPrompt":""}]}`;
 
   const generate=async()=>{
     setLoading(true);setError("");
@@ -479,10 +503,12 @@ Antworte NUR mit JSON:
                 {st.teams?.length>0&&<div style={{fontSize:11,color:C.muted,marginBottom:3}}>👦 {st.teams.join(" · ")}</div>}
                 <ExLink title={st.exercise} desc={st.description} setup={st.setup} mat={st.material} cat="technik" tips=""/>
                 {st.description&&<div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginTop:2}}>{st.description}</div>}
+                {st.playerCount&&<div style={{fontSize:11,color:"#0369a1",fontWeight:700,marginTop:3}}>👥 {st.playerCount}{st.trainerNeeded?" · 🧑‍🏫 Trainer nötig":""}</div>}
                 {st.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:4}}>{st.material.map(m=><span key={m} style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
               </div>)}
             </div>}
             {ph.material?.length>0&&!ph.stations?.length&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:4}}>{ph.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
+            {ph.playerDistribution&&<div style={{fontSize:12,background:"#f0f9ff",borderRadius:6,padding:"5px 10px",marginTop:4,color:"#0369a1",fontWeight:600}}>👥 {ph.playerDistribution}{ph.minCoaches>0?` · 🧑‍🏫 min. ${ph.minCoaches} Trainer`:""}</div>}
             {ph.tips&&<div style={{fontSize:12,color:"#7c3aed",fontStyle:"italic",marginTop:4}}>💡 {ph.tips}</div>}
           </div>
         </div>);
@@ -497,10 +523,24 @@ Antworte NUR mit JSON:
           return(<div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${isSaved?"#22c55e":C.border}`,background:isSaved?"#f0fdf4":"white",flexWrap:"wrap"}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:13,color:C.text}}>{ex.title}</span><CatBadge cat={ex.category} small/></div>
-              {ex.description&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{ex.description.slice(0,80)}{ex.description.length>80?"…":""}</div>}
+              {ex.playerCount&&<div style={{fontSize:11,color:"#0369a1",fontWeight:700,marginTop:2}}>👥 {ex.playerCount}</div>}
+            {ex.description&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{ex.description.slice(0,100)}{ex.description.length>100?"…":""}</div>}
+            {ex.coachingPoints?.length>0&&<div style={{fontSize:11,color:"#7c3aed",marginTop:3}}>💡 {ex.coachingPoints[0]}</div>}
             </div>
             {isSaved?<span style={{fontSize:12,color:"#16a34a",fontWeight:700,flexShrink:0}}>✅ Gespeichert</span>:
-              onSaveEx&&<Btn sm onClick={()=>{onSaveEx({...ex,id:uid(),createdAt:now(),updatedAt:now(),rating:0,done:false,imageUrl:"",source:"KI-Trainingsplan",notes:ex.notes||""});setSaved(s=>[...s,i]);}}><Plus size={12}/> Speichern</Btn>}
+              onSaveEx&&<Btn sm onClick={async()=>{
+  let imageUrl="";
+  if(ex.sketchPrompt&&apiKey){
+    try{
+      const r=await callClaude([{role:"user",content:`Erstelle eine einfache, klare Trainingsskizze als SVG für diese Übung. Nutze: Kreise für Spieler, Dreiecke/Hütchen für Aufbau, Pfeile für Bewegungsrichtungen. Schwarz-weiß. Beschriftung auf Deutsch. Gib NUR valides SVG zurück, kein anderer Text.\n\nÜbung: ${ex.title}\nAufbau: ${ex.sketchPrompt}`}],apiKey);
+      const svg=r.match(/<svg[\s\S]*<\/svg>/)?.[0];
+      if(svg) imageUrl="data:image/svg+xml;base64,"+btoa(unescape(encodeURIComponent(svg)));
+    }catch(e){}
+  }
+  const notes=[ex.coachingPoints?.length?`💡 Tipps:\n${ex.coachingPoints.map(t=>`• ${t}`).join("\n")}`:"",ex.variante?.leichter?`📉 Leichter: ${ex.variante.leichter}`:"",ex.variante?.schwerer?`📈 Schwerer: ${ex.variante.schwerer}`:""].filter(Boolean).join("\n\n");
+  onSaveEx({...ex,id:uid(),createdAt:now(),updatedAt:now(),rating:0,done:false,imageUrl,source:"KI-Trainingsplan",notes});
+  setSaved(s=>[...s,i]);
+}}><Plus size={12}/> Speichern{ex.sketchPrompt?" + Skizze":""}</Btn>}
           </div>);
         })}
       </div>
@@ -966,12 +1006,16 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
 
 // ── TEAM BUILDER ──────────────────────────────────────────────────
 function TeamBuilderModal({availablePlayers,onSaveTeams,onClose}) {
-  const [perTeam,setPerTeam]=useState(3);
+  const activeDef=availablePlayers.filter(p=>p.active);
+  const defTeams=Math.max(2,Math.round(activeDef.length/3));
+  const [numTeams,setNumTeams]=useState(defTeams);
   const [mode,setMode]=useState("balanced");
+  const [skillDist,setSkillDist]=useState({strong:0,weak:0});
   const [teams,setTeams]=useState([]);
-  const [selIds,setSelIds]=useState(availablePlayers.filter(p=>p.active).map(p=>p.id));
+  const [selIds,setSelIds]=useState(activeDef.map(p=>p.id));
   const sel=availablePlayers.filter(p=>selIds.includes(p.id));
-  const generate=()=>setTeams(buildTeams(sel,perTeam,mode));
+  const perTeam=sel.length?Math.round(sel.length/numTeams):3;
+  const generate=()=>setTeams(buildTeams(sel,numTeams,mode,skillDist));
   const mb=(k,l,d)=><button onClick={()=>setMode(k)} style={{flex:1,minWidth:110,padding:"8px 10px",borderRadius:8,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><div style={{fontWeight:700,fontSize:13,color:mode===k?C.primary:C.text}}>{l}</div><div style={{fontSize:11,color:C.muted}}>{d}</div></button>;
   return(<div>
     <div style={{marginBottom:16}}>
@@ -980,10 +1024,33 @@ function TeamBuilderModal({availablePlayers,onSaveTeams,onClose}) {
         {availablePlayers.map(p=><button key={p.id} onClick={()=>setSelIds(prev=>prev.includes(p.id)?prev.filter(x=>x!==p.id):[...prev,p.id])} style={{padding:"4px 12px",borderRadius:20,border:`2px solid ${selIds.includes(p.id)?STR[p.strength].color:C.border}`,background:selIds.includes(p.id)?STR[p.strength].light:"white",color:selIds.includes(p.id)?STR[p.strength].color:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{STR[p.strength].emoji} {p.name}</button>)}
       </div>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:12,marginBottom:14}}>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Spieler/Team</label><input type="number" value={perTeam} onChange={e=>setPerTeam(Number(e.target.value))} min={2} max={8} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",boxSizing:"border-box"}}/><div style={{fontSize:11,color:C.muted,marginTop:4}}>→ {Math.floor(sel.length/perTeam)} Teams</div></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{mb("balanced","⚖️ Ausgeglichen","Stärken gleichmäßig")}{mb("mixed","🎨 Durchmischt","Alle Level je Team")}{mb("challenge","⚡ Herausforderung","Stark vs. Schwach")}{mb("random","🎲 Zufällig","Komplett zufällig")}</div></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+      <div>
+        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Anzahl Teams</label>
+        <Stepper value={numTeams} onChange={setNumTeams} min={2} max={12}/>
+        <div style={{fontSize:11,color:C.muted,marginTop:4}}>≈ {perTeam} Spieler/Team</div>
+      </div>
+      <div>
+        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          {[["balanced","⚖️ Ausgeglichen","Stärken gleichmäßig verteilt"],["skill","📊 Stärke-Gruppen","Ich bestimme wie viele stark/schwach"],["mixed","🎨 Durchmischt","Alle Level in jedem Team"],["challenge","⚡ Herausforderung","Stark vs. Schwach"],["random","🎲 Zufällig","Komplett zufällig"]].map(([k,l,d])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 10px",borderRadius:7,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",gap:8,alignItems:"center"}}><div style={{flex:1}}><span style={{fontWeight:700,fontSize:12,color:mode===k?C.primary:C.text}}>{l}</span><span style={{fontSize:11,color:C.muted,marginLeft:4}}>{d}</span></div></button>)}
+        </div>
+      </div>
     </div>
+    {mode==="skill"&&<div style={{background:"#f0f9ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #bae6fd"}}>
+      <div style={{fontSize:12,fontWeight:700,color:"#0369a1",marginBottom:10}}>📊 Stärke-Verteilung ({numTeams} Teams gesamt)</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+        {[["strong","💪 Starke Teams","#dc2626","#fee2e2"],["mid","➖ Gemischte Teams","#d97706","#fef3c7"],["weak","🌱 Schwache Teams","#16a34a","#dcfce7"]].map(([k,l,col,bg])=>{
+          const val=k==="mid"?numTeams-skillDist.strong-skillDist.weak:skillDist[k]||0;
+          const setVal=v=>{if(k==="mid")return;const other=k==="strong"?"weak":"strong";const max=numTeams-(skillDist[other]||0);setSkillDist(d=>({...d,[k]:Math.min(Math.max(0,v),max)}));};
+          return(<div key={k} style={{textAlign:"center",padding:"8px",borderRadius:8,background:bg,border:`1.5px solid ${col}33`}}>
+            <div style={{fontSize:11,fontWeight:700,color:col,marginBottom:6}}>{l}</div>
+            {k==="mid"?<div style={{fontWeight:900,fontSize:22,color:col}}>{val}</div>:<Stepper value={val} onChange={setVal} min={0} max={numTeams-1}/>}
+          </div>);
+        })}
+      </div>
+      <div style={{fontSize:11,color:C.muted,marginTop:8}}>Starke Teams spielen gegen starke, schwache gegen schwache → fairer Spaß für alle</div>
+    </div>}
     <Btn onClick={generate} style={{width:"100%",justifyContent:"center",marginBottom:16}}><Shuffle size={16}/> Teams generieren</Btn>
     {teams.length>0&&(<><Divider/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
