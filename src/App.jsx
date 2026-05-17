@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.5.0";
+const APP_VERSION = "2.5.1";
 const CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed" },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff" },
@@ -33,7 +33,7 @@ const fmtDate = s => s?new Date(s).toLocaleDateString("de-DE",{weekday:"short",d
 const todayISO = () => new Date().toISOString().split("T")[0];
 // ── SAVE FILE mit Dialog (Android/Desktop: zeigt "Speichern unter") ──
 const saveFile = async (content, filename, mimeType) => {
-  // Methode 1: File System Access API → zeigt echten Speichern-Dialog
+  // Methode 1: File System Access API → zeigt echten Speichern-Dialog mit Ordnerwahl
   if (window.showSaveFilePicker) {
     try {
       const ext = filename.split('.').pop();
@@ -49,13 +49,13 @@ const saveFile = async (content, filename, mimeType) => {
       const writable = await handle.createWritable();
       await writable.write(content);
       await writable.close();
-      return true;
+      return {ok:true, method:'picker', filename: handle.name};
     } catch(e) {
-      if (e.name === 'AbortError') return false; // Nutzer hat abgebrochen
-      // Fallback bei anderen Fehlern
+      if (e.name === 'AbortError') return {ok:false, method:'cancelled'};
+      // API nicht unterstützt oder anderer Fehler → Blob-Fallback
     }
   }
-  // Methode 2: Blob + Object URL (zuverlässiger als data: URI auf Android)
+  // Methode 2: Blob-Download (geht in Downloads-Ordner)
   try {
     const mime = mimeType || 'application/octet-stream';
     const blob = new Blob([content], {type: mime});
@@ -64,14 +64,36 @@ const saveFile = async (content, filename, mimeType) => {
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
-    return true;
-  } catch(e) { return false; }
+    return {ok:true, method:'blob', filename};
+  } catch(e) { return {ok:false, method:'error'}; }
+};
+// Helper: führt Export durch und zeigt passenden Toast
+const doExport = async (content, filename, mimeType, toast) => {
+  const r = await saveFile(content, filename, mimeType);
+  if (!r.ok && r.method === 'cancelled') return; // Nutzer hat abgebrochen
+  if (!r.ok) { toast('Export fehlgeschlagen', 'err'); return; }
+  if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
+  else toast(`📥 ${r.filename} → Downloads-Ordner`);
 };
 
-const dlJson = async (o, n) => await saveFile(JSON.stringify(o, null, 2), n, 'application/json');
-const dlCsv  = async (r, c, n) => {
-  const csv = [c.join(','), ...r.map(x => c.map(k => `"${String(x[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
-  await saveFile('\uFEFF' + csv, n, 'text/csv;charset=utf-8;');
+const dlJson = async (o, n, toast) => {
+  const r = await saveFile(JSON.stringify(o, null, 2), n, 'application/json');
+  if (!toast || !r) return r;
+  if (!r.ok && r.method === 'cancelled') return r;
+  if (!r.ok) toast('Export fehlgeschlagen', 'err');
+  else if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
+  else toast(`📥 ${r.filename} → Downloads-Ordner`);
+  return r;
+};
+const dlCsv  = async (rows, cols, n, toast) => {
+  const csv = [cols.join(','), ...rows.map(x => cols.map(k => `"${String(x[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+  const r = await saveFile('\uFEFF' + csv, n, 'text/csv;charset=utf-8;');
+  if (!toast || !r) return r;
+  if (!r.ok && r.method === 'cancelled') return r;
+  if (!r.ok) toast('Export fehlgeschlagen', 'err');
+  else if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
+  else toast(`📥 ${r.filename} → Downloads-Ordner`);
+  return r;
 };
 const exportExJson = (ex) => dlJson(
   {version:APP_VERSION, exportDate:now(), type:'exercises', exercises:[ex]},
@@ -589,8 +611,7 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
   const toggleSel=id=>setSelIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   const bulkExport=()=>{
     const sel=exercises.filter(e=>selIds.includes(e.id));
-    dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:sel},`uebungen_auswahl_${todayISO()}.json`);
-    toast(`${sel.length} Übungen exportiert`);
+    dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:sel},`uebungen_auswahl_${todayISO()}.json`,toast);
   };
 
   const handleImportJson=async e=>{
@@ -1295,9 +1316,8 @@ function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose}) {
 function TournamentForm({onSave,onClose}) {
   const [form,setForm]=useState({name:"",date:todayISO(),matchDuration:8,fields:1,notes:""});
   const [teams,setTeams]=useState([{id:uid(),name:"Team 1",color:TCOLORS[0]},{id:uid(),name:"Team 2",color:TCOLORS[1]}]);
-  const [nt,setNt]=useState("");
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const addTeam=()=>{ if(!nt.trim())return;setTeams(t=>[...t,{id:uid(),name:nt.trim(),color:TCOLORS[t.length%TCOLORS.length]}]);setNt(""); };
+  const addTeam=()=>setTeams(t=>[...t,{id:uid(),name:`Team ${t.length+1}`,color:TCOLORS[t.length%TCOLORS.length]}]);
   return(<div>
     <Inp label="Turniername *" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="z.B. Herbstturnier"/>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
@@ -1314,7 +1334,7 @@ function TournamentForm({onSave,onClose}) {
           {teams.length>2&&<button onClick={()=>setTeams(ts=>ts.filter(x=>x.id!==t.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:2}}>✕</button>}
         </div>)}
       </div>
-      <div style={{display:"flex",gap:8}}><input value={nt} onChange={e=>setNt(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTeam()} placeholder="Team hinzufügen..." style={{flex:1,padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"inherit"}}/><Btn sm onClick={addTeam}>+ Team</Btn></div>
+      <Btn sm onClick={addTeam}><Plus size={13}/> Team hinzufügen</Btn>
       <div style={{fontSize:12,color:C.muted,marginTop:6}}>→ {teams.length*(teams.length-1)/2} Spiele (Round Robin)</div>
     </div>
     <Txta label="Notizen" value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2}/>
@@ -1354,8 +1374,8 @@ function TournamentDetail({tournament:t,onUpdate,onBack}) {
     </div>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content"}}>{tb("plan","Spielplan")}{tb("teams","Teams")}{tb("schedule","Zeitplan")}{tb("table","Tabelle")}</div>
     {tab==="plan"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {mwf.map((m,i)=>{ const h=gt(m.homeId),a=gt(m.awayId);if(!h||!a)return null;return(<div key={m.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${m.played?"#22c55e":C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <div style={{fontSize:12,color:C.muted,fontWeight:600,minWidth:60}}>#{i+1}{t.fields>1&&` · F${m.field}`}</div>
+      {t.matches.map((m,i)=>{ const field=(i%fields)+1; const h=gt(m.homeId),a=gt(m.awayId);if(!h||!a)return null;return(<div key={m.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${m.played?"#22c55e":C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{fontSize:12,color:C.muted,fontWeight:600,minWidth:60}}>#{i+1}{fields>1&&` · F${field}`}</div>
         <div style={{display:"flex",alignItems:"center",gap:10,flex:1,justifyContent:"center",flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,fontWeight:700,fontSize:15}}><div style={{width:12,height:12,borderRadius:"50%",background:h.color}}/>{h.name}</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1579,14 +1599,14 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       {apiKey&&<div style={{marginTop:8,fontSize:12,color:"#16a34a",fontWeight:600}}>✅ API-Key aktiv – KI-Funktionen verfügbar</div>}
     </div>}/>
     <Sec title="📤 Exportieren" ch={<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`gjugend_backup_${todayISO()}.json`);toast("Backup exportiert");}}/>
-      <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`gjugend_uebungen_${todayISO()}.json`);toast("Übungen exportiert");}}/>
-      <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`gjugend_team_${todayISO()}.json`);toast("Team exportiert");}}/>
-      <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={()=>{dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`gjugend_spieler_${todayISO()}.csv`);toast("CSV exportiert");}}/>
-      <EC icon="📅" title="Training" desc="Alle Trainingseinheiten" sub={`${sessions.length} Einheiten`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"sessions",sessions},`gjugend_training_${todayISO()}.json`);toast("Training exportiert");}}/>
-      <EC icon="🏆" title="Turniere" desc="Alle Turniere & Ergebnisse" sub={`${tournaments.length} Turniere`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"tournaments",tournaments},`gjugend_turniere_${todayISO()}.json`);toast("Turniere exportiert");}}/>
-      <EC icon="💰" title="Kassenbuch" desc="Einnahmen & Ausgaben" sub={`${kassenbuch.length} Einträge`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"kassenbuch",kassenbuch},`gjugend_kasse_${todayISO()}.json`);toast("Kassenbuch exportiert");}}/>
-      <EC icon="📋" title="Kassenbuch (CSV)" desc="Für Excel & Steuer" sub={`${kassenbuch.length} Einträge`} fn={()=>{dlCsv(kassenbuch,["date","description","amount","type","category"],`gjugend_kasse_${todayISO()}.csv`);toast("Kassenbuch CSV exportiert");}}/>
+      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`gjugend_backup_${todayISO()}.json`,toast)}/>
+      <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`gjugend_uebungen_${todayISO()}.json`,toast)}/>
+      <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`gjugend_team_${todayISO()}.json`,toast)}/>
+      <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={async()=>dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`gjugend_spieler_${todayISO()}.csv`,toast)}/>
+      <EC icon="📅" title="Training" desc="Alle Trainingseinheiten" sub={`${sessions.length} Einheiten`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"sessions",sessions},`gjugend_training_${todayISO()}.json`,toast)}/>
+      <EC icon="🏆" title="Turniere" desc="Alle Turniere & Ergebnisse" sub={`${tournaments.length} Turniere`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"tournaments",tournaments},`gjugend_turniere_${todayISO()}.json`,toast)}/>
+      <EC icon="💰" title="Kassenbuch" desc="Einnahmen & Ausgaben" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"kassenbuch",kassenbuch},`gjugend_kasse_${todayISO()}.json`,toast)}/>
+      <EC icon="📋" title="Kassenbuch (CSV)" desc="Für Excel & Steuer" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlCsv(kassenbuch,["date","description","amount","type","category"],`gjugend_kasse_${todayISO()}.csv`,toast)}/>
     </div>}/>
     <Sec title="📥 Importieren" ch={<div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"16px 18px"}}>
       <div style={{marginBottom:12}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Modus</label><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{[["merge","Zusammenführen"],["replace","Ersetzen ⚠️"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 14px",borderRadius:8,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",color:mode===k?C.primary:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{l}</button>)}</div></div>
