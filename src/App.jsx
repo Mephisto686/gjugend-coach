@@ -6,14 +6,21 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.5.1";
-const CATS = {
-  aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed" },
-  koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff" },
-  technik:      { label:"Technik",      emoji:"⚽", color:"#2563eb", bg:"#eff6ff" },
-  spielform:    { label:"Spielform",    emoji:"🏆", color:"#16a34a", bg:"#f0fdf4" },
-  abschluss:    { label:"Abschluss",   emoji:"🌅", color:"#db2777", bg:"#fdf2f8" },
+const APP_VERSION = "2.6.0";
+const BUILTIN_CATS = {
+  aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
+  koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
+  technik:      { label:"Technik",      emoji:"⚽", color:"#2563eb", bg:"#eff6ff", builtin:true },
+  spielform:    { label:"Spielform",    emoji:"🏆", color:"#16a34a", bg:"#f0fdf4", builtin:true },
+  abschluss:    { label:"Abschluss",   emoji:"🌅", color:"#db2777", bg:"#fdf2f8", builtin:true },
 };
+// Will be overwritten at runtime with merged builtin+custom cats
+let CATS = {...BUILTIN_CATS};
+const CUSTOM_CAT_PALETTE = [
+  {color:"#0891b2",bg:"#ecfeff"},{color:"#65a30d",bg:"#f7fee7"},
+  {color:"#9333ea",bg:"#faf5ff"},{color:"#e11d48",bg:"#fff1f2"},
+  {color:"#0369a1",bg:"#f0f9ff"},{color:"#b45309",bg:"#fffbeb"},
+];
 const PTAGS = ["Dribbeln","Passspiel","Torschuss","Zweikampf","Koordination","Gleichgewicht","Reaktion","Schnelligkeit","Ausdauer","Teamwork","Spaß","Kreativität","Wettkampf","Funino","Motorik","Raumgefühl"];
 const PMAT  = ["Hütchen","Bälle","Minitore","Leibchen","Stangen","Reifen","Pylonen","Markierungsscheiben","Seilchen","Tore (groß)"];
 const STR = {
@@ -230,7 +237,14 @@ const Modal=({title,onClose,children,wide})=>(
   </div>
 );
 const CatBadge=({cat,small})=>{const c=CATS[cat];if(!c)return null;return<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:small?11:12,fontWeight:700,padding:small?"2px 8px":"3px 10px",borderRadius:20,background:c.bg,color:c.color,whiteSpace:"nowrap"}}>{c.emoji} {c.label}</span>;};
-const Stars=({value,onChange,readonly})=><div style={{display:"flex",gap:2}}>{[1,2,3,4,5].map(n=><span key={n} onClick={()=>!readonly&&onChange?.(n)} style={{cursor:readonly?"default":"pointer",fontSize:readonly?14:18,color:n<=value?"#f59e0b":"#e2e8f0",lineHeight:1}}>★</span>)}</div>;
+const Stars=({value,onChange,readonly})=>{
+  const v=value||0;
+  return<div style={{display:"flex",gap:2,alignItems:"center"}}>
+    {[1,2,3,4,5].map(n=><span key={n} onClick={()=>{if(readonly)return;onChange?.(n===v?0:n);}} style={{cursor:readonly?"default":"pointer",fontSize:readonly?14:18,color:n<=v?"#f59e0b":"#e2e8f0",lineHeight:1,userSelect:"none"}}>★</span>)}
+    {!readonly&&v>0&&<button onClick={()=>onChange?.(0)} style={{fontSize:10,color:C.muted,background:"none",border:"none",cursor:"pointer",padding:"0 2px",marginLeft:2,fontFamily:"inherit"}}>✕</button>}
+    {v===0&&<span style={{fontSize:11,color:C.muted,marginLeft:2,fontStyle:"italic"}}>unbewertet</span>}
+  </div>;
+};
 const StrBadge=({level,small})=>{const s=STR[level];if(!s)return null;return<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:small?11:12,fontWeight:700,padding:"2px 10px",borderRadius:20,background:s.light,color:s.color}}>{s.emoji} {s.label}</span>;};
 const Inp=({label,style:st,...p})=><div style={{marginBottom:14}}>{label&&<label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>{label}</label>}<input {...p} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,color:C.text,background:"white",outline:"none",boxSizing:"border-box",...st}}/></div>;
 const Txta=({label,...p})=><div style={{marginBottom:14}}>{label&&<label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>{label}</label>}<textarea {...p} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,color:C.text,background:"white",outline:"none",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"}}/></div>;
@@ -486,7 +500,7 @@ Antworte NUR mit JSON:
               {ex.description&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{ex.description.slice(0,80)}{ex.description.length>80?"…":""}</div>}
             </div>
             {isSaved?<span style={{fontSize:12,color:"#16a34a",fontWeight:700,flexShrink:0}}>✅ Gespeichert</span>:
-              onSaveEx&&<Btn sm onClick={()=>{onSaveEx({...ex,id:uid(),createdAt:now(),updatedAt:now(),rating:3,imageUrl:"",source:"KI-Trainingsplan",notes:ex.notes||""});setSaved(s=>[...s,i]);}}><Plus size={12}/> Speichern</Btn>}
+              onSaveEx&&<Btn sm onClick={()=>{onSaveEx({...ex,id:uid(),createdAt:now(),updatedAt:now(),rating:0,done:false,imageUrl:"",source:"KI-Trainingsplan",notes:ex.notes||""});setSaved(s=>[...s,i]);}}><Plus size={12}/> Speichern</Btn>}
           </div>);
         })}
       </div>
@@ -532,7 +546,7 @@ Antworte NUR mit JSON:
 
 // ── EXERCISE FORM ─────────────────────────────────────────────────
 function ExerciseForm({exercise,onSave,onClose}) {
-  const [form,setForm]=useState({title:"",category:"technik",description:"",setup:"",material:[],minPlayers:4,maxPlayers:12,duration:10,rating:3,tags:[],imageUrl:"",source:"",notes:"",...exercise});
+  const [form,setForm]=useState({title:"",category:"technik",description:"",setup:"",material:[],minPlayers:4,maxPlayers:12,duration:10,rating:0,done:false,tags:[],imageUrl:"",source:"",notes:"",...exercise});
   const [mi,setMi]=useState("");const imgRef=useRef();
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const addMat=m=>{ if(!m.trim())return;if(!form.material.includes(m.trim()))set("material",[...form.material,m.trim()]);setMi(""); };
@@ -540,6 +554,15 @@ function ExerciseForm({exercise,onSave,onClose}) {
   return(<div>
     <Inp label="Titel *" value={form.title} onChange={e=>set("title",e.target.value)} placeholder="Name der Übung"/>
     <Sel label="Kategorie" value={form.category} onChange={e=>set("category",e.target.value)}>{Object.entries(CATS).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}</Sel>
+    <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+      <div style={{flex:1}}>
+        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Status</label>
+        <div style={{display:"flex",gap:8}}>
+          {[[false,"⏳ Noch nicht gemacht","#f1f5f9",C.muted],[true,"✅ Schon gemacht","#dcfce7","#16a34a"]].map(([v,l,bg,col])=>
+            <button key={String(v)} onClick={()=>set("done",v)} style={{flex:1,padding:"7px 10px",borderRadius:8,border:`2px solid ${form.done===v?col:C.border}`,background:form.done===v?bg:"white",color:form.done===v?col:C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit"}}>{l}</button>)}
+        </div>
+      </div>
+    </div>
     <Txta label="Ablauf / Beschreibung" value={form.description} onChange={e=>set("description",e.target.value)} placeholder="Wie läuft die Übung ab?" rows={4}/>
     <Txta label="Aufbau" value={form.setup} onChange={e=>set("setup",e.target.value)} placeholder="Wie wird das Feld aufgebaut?" rows={3}/>
     <div style={{marginBottom:14}}>
@@ -577,7 +600,16 @@ function ExerciseForm({exercise,onSave,onClose}) {
 // ── EXERCISE DETAIL ───────────────────────────────────────────────
 function ExDetail({exercise:ex,onEdit,onDelete,onClose}) {
   return(<div>
-    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}><CatBadge cat={ex.category}/><Stars value={ex.rating} readonly/><span style={{color:C.muted,fontSize:13,marginLeft:"auto"}}>⏱ {ex.duration} Min · 👥 {ex.minPlayers}–{ex.maxPlayers}</span></div>
+    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+      <CatBadge cat={ex.category}/>
+      {ex.done?<span style={{fontSize:12,fontWeight:700,padding:"2px 8px",borderRadius:20,background:"#dcfce7",color:"#16a34a"}}>✅ Gemacht</span>:<span style={{fontSize:12,fontWeight:700,padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted}}>⏳ Noch nicht</span>}
+      <Stars value={ex.rating} readonly/>
+      <span style={{color:C.muted,fontSize:13,marginLeft:"auto"}}>⏱ {ex.duration} Min · 👥 {ex.minPlayers}–{ex.maxPlayers}</span>
+    </div>
+    <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+      <Btn sm variant="secondary" onClick={()=>onEdit({...ex,done:!ex.done})} style={{background:ex.done?"#fff":"#f0fdf4",borderColor:ex.done?C.border:"#22c55e",color:ex.done?C.muted:"#15803d"}}>{ex.done?"⏳ Als neu markieren":"✅ Als gemacht markieren"}</Btn>
+      {[1,2,3,4,5].map(n=><button key={n} title={`${n} Sterne`} onClick={()=>onEdit({...ex,rating:ex.rating===n?0:n})} style={{width:32,height:32,borderRadius:8,border:`1.5px solid ${ex.rating===n?"#f59e0b":C.border}`,background:ex.rating===n?"#fffbeb":"white",fontSize:16,cursor:"pointer",color:ex.rating>=n?"#f59e0b":"#e2e8f0"}}>★</button>)}
+    </div>
     {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:10,marginBottom:16,border:`1px solid ${C.border}`}}/>}
     {ex.setup&&<div style={{marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>📐 Aufbau</div><div style={{fontSize:14,color:C.text,lineHeight:1.6,background:"#f8fafc",borderRadius:8,padding:"12px 14px",border:`1px solid ${C.border}`}}>{ex.setup}</div></div>}
     {ex.description&&<div style={{marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>🎯 Ablauf</div><div style={{fontSize:14,color:C.text,lineHeight:1.6,background:"#f8fafc",borderRadius:8,padding:"12px 14px",border:`1px solid ${C.border}`}}>{ex.description}</div></div>}
@@ -691,7 +723,13 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
                 onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
                 {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
                 {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",height:100,objectFit:"cover",borderRadius:8}}/>}
-                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}><CatBadge cat={ex.category} small/><Stars value={ex.rating} readonly/></div>
+                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+                <CatBadge cat={ex.category} small/>
+                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                  {ex.done&&<span style={{fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:10,background:"#dcfce7",color:"#16a34a"}}>✅</span>}
+                  <Stars value={ex.rating} readonly/>
+                </div>
+              </div>
                 <div style={{fontWeight:800,fontSize:15,color:C.text}}>{ex.title}</div>
                 <div style={{display:"flex",gap:10,color:C.muted,fontSize:12,fontWeight:600,flexWrap:"wrap"}}><span>⏱ {ex.duration} Min</span><span>👥 {ex.minPlayers}–{ex.maxPlayers}</span>{ex.material?.length>0&&<span>📦 {ex.material.length}x</span>}</div>
                 {ex.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.tags.slice(0,3).map(t=><span key={t} style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}{ex.tags.length>3&&<span style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11}}>+{ex.tags.length-3}</span>}</div>}
@@ -1435,7 +1473,7 @@ function TournamentDetail({tournament:t,onUpdate,onBack}) {
         <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:.6}}>Pause zw. Spielen (Min)</label><Stepper value={pauseMin} onChange={setPauseMin} min={0} max={15}/></div>
         <div style={{fontSize:13,color:C.muted,alignSelf:"center",paddingBottom:2}}>Spieldauer: {t.matchDuration} Min · {fields} Feld{fields>1?"er":""}</div>
       </div>
-      {fields>1&&<div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(fields,4)},1fr)`,gap:12,marginBottom:16}}>
+      {fields>1&&<div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(fields,3)},1fr)`,gap:10,marginBottom:16}}>
         {Array.from({length:fields},(_,fi)=>{
           const fieldSlots=buildSchedule().filter(s=>s.field===fi+1);
           return(<div key={fi} style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
@@ -1443,7 +1481,11 @@ function TournamentDetail({tournament:t,onUpdate,onBack}) {
             <div style={{padding:"8px 10px",display:"flex",flexDirection:"column",gap:4}}>
               {fieldSlots.map((sl,i)=>{const h=gt(sl.match.homeId),a=gt(sl.match.awayId);return(<div key={i} style={{fontSize:12,padding:"4px 8px",borderRadius:6,background:sl.match.played?"#f0fdf4":"#f8fafc",border:`1px solid ${C.border}`}}>
                 <div style={{fontWeight:700,color:C.muted,marginBottom:2}}>{fmtTime(sl.startMin)}</div>
-                <div style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",background:h?.color,display:"inline-block"}}/><span style={{fontWeight:600}}>{h?.name}</span><span style={{color:C.muted,margin:"0 2px"}}>:</span><span style={{fontWeight:600}}>{a?.name}</span><span style={{width:8,height:8,borderRadius:"50%",background:a?.color,display:"inline-block"}}/></div>
+                <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                  <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}><span style={{width:8,height:8,borderRadius:"50%",background:h?.color,display:"inline-block",flexShrink:0}}/><span style={{fontWeight:700,fontSize:12,wordBreak:"break-word"}}>{h?.name}</span></div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,paddingLeft:12}}>vs.</div>
+                  <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}><span style={{width:8,height:8,borderRadius:"50%",background:a?.color,display:"inline-block",flexShrink:0}}/><span style={{fontWeight:700,fontSize:12,wordBreak:"break-word"}}>{a?.name}</span></div>
+                </div>
                 {sl.match.played&&<div style={{fontSize:11,color:"#16a34a",fontWeight:700}}>{sl.match.homeScore}:{sl.match.awayScore} ✓</div>}
               </div>);})}
             </div>
@@ -1454,9 +1496,9 @@ function TournamentDetail({tournament:t,onUpdate,onBack}) {
         {buildSchedule().map((sl,i)=>{const h=gt(sl.match.homeId),a=gt(sl.match.awayId);return(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,background:sl.match.played?"#f0fdf4":C.card,border:`1.5px solid ${sl.match.played?"#22c55e":C.border}`,flexWrap:"wrap"}}>
           <span style={{fontSize:13,fontWeight:800,color:C.muted,minWidth:44}}>{fmtTime(sl.startMin)}</span>
           <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center"}}>
-            <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:10,height:10,borderRadius:"50%",background:h?.color}}/><span style={{fontWeight:700,fontSize:14}}>{h?.name}</span></div>
-            {sl.match.played?<span style={{fontWeight:800,fontSize:15,color:C.text}}>{sl.match.homeScore}:{sl.match.awayScore}</span>:<span style={{color:C.muted}}>vs.</span>}
-            <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontWeight:700,fontSize:14}}>{a?.name}</span><div style={{width:10,height:10,borderRadius:"50%",background:a?.color}}/></div>
+            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0}}><div style={{width:10,height:10,borderRadius:"50%",background:h?.color,flexShrink:0}}/><span style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h?.name}</span></div>
+            {sl.match.played?<span style={{fontWeight:800,fontSize:15,color:C.text,flexShrink:0}}>{sl.match.homeScore}:{sl.match.awayScore}</span>:<span style={{color:C.muted,flexShrink:0}}>vs.</span>}
+            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0,justifyContent:"flex-end"}}><span style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a?.name}</span><div style={{width:10,height:10,borderRadius:"50%",background:a?.color,flexShrink:0}}/></div>
           </div>
           <span style={{fontSize:12,color:C.muted}}>⏱ {t.matchDuration} Min</span>
         </div>);})}
@@ -1614,6 +1656,18 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       <Btn onClick={()=>ref.current.click()}><Upload size={14}/> Datei auswählen</Btn>
       <input ref={ref} type="file" accept=".json,.csv" onChange={doImport} style={{display:"none"}}/>
     </div>}/>
+    <Sec title="🏷️ Eigene Kategorien" ch={<div>
+      <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Füge eigene Trainings-Kategorien hinzu. Sie erscheinen in der Bibliothek und bei der Planung.</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+        {(customCats||[]).map((cc,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:"#f8fafc",border:`1.5px solid ${C.border}`}}>
+          <span style={{fontSize:18}}>{cc.emoji}</span>
+          <span style={{fontWeight:700,fontSize:14,color:cc.color,flex:1}}>{cc.label}</span>
+          <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:cc.bg,color:cc.color,fontWeight:700}}>Vorschau</span>
+          <button onClick={()=>onSaveCustomCats((customCats||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4,fontSize:16}}>✕</button>
+        </div>)}
+      </div>
+      <AddCatForm onAdd={cc=>onSaveCustomCats([...(customCats||[]),cc])}/>
+    </div>}/>
     <div style={{textAlign:"center",padding:"20px 0",color:"#cbd5e1",fontSize:12}}>G-Jugend Coach v{APP_VERSION} · Made with ⚽ for G-Jugend Hamburg</div>
   </div>);
 }
@@ -1645,6 +1699,14 @@ export default function App() {
   const [tournaments,setTournaments,tr]=useStorage("tournaments",[]);
   const [kassenbuch, setKassenbuch, kr]=useStorage("kassenbuch", []);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
+  const [customCats, setCustomCats    ]=useStorage("customCats", []);
+  // Sync CATS global whenever customCats changes
+  useEffect(()=>{
+    const merged={...BUILTIN_CATS};
+    (customCats||[]).forEach((cc,i)=>{ merged['custom_'+i]={...cc}; });
+    Object.keys(CATS).forEach(k=>{if(k.startsWith('custom_'))delete CATS[k];});
+    Object.assign(CATS,merged);
+  },[customCats]);
   const {toast,Toasts}=useToast();
   // Functional update helpers - prevent stale closure bugs
   const mergeArr=(inc)=>prev=>{ const m=Object.fromEntries(prev.map(e=>[e.id,e]));inc?.forEach(i=>{if(!m[i.id])m[i.id]=i;});return Object.values(m); };
@@ -1686,7 +1748,7 @@ export default function App() {
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
-      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)}/>}
+      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats}/>}
     </main>
   </div>);
 }
