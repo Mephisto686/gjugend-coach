@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.3.0";
 const CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed" },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff" },
@@ -159,7 +159,7 @@ const calcStandings = (teams,matches) => {
 
 // ── CLAUDE API ────────────────────────────────────────────────────
 async function callClaude(messages,apiKey,system) {
-  const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01"};
+  const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
   if(apiKey) headers["x-api-key"]=apiKey;
   const body={model:"claude-sonnet-4-20250514",max_tokens:2000,messages};
   if(system) body.system=system;
@@ -246,34 +246,136 @@ category: aufwaermen|koordination|technik|spielform|abschluss`;
 }
 
 // ── AI TRAINING PLAN ──────────────────────────────────────────────
-function AITrainingModal({players,exercises,onClose,apiKey}) {
-  const [cfg,setCfg]=useState({kids:players.filter(p=>p.active).length,coaches:1,duration:60,focus:"",useLib:true});
+function AITrainingModal({players,exercises,onClose,apiKey,onSaveEx}) {
+  const MAT_OPTS=["Bälle","Hütchen","Leibchen","Minitore","Koordinationsleiter","Stangen","Reifen","Pylonen"];
+  const [cfg,setCfg]=useState({kids:players.filter(p=>p.active).length||10,coaches:1,duration:60,focus:"",useLib:true,location:"outdoor",material:["Bälle"]});
   const [loading,setLoading]=useState(false);
   const [plan,setPlan]=useState(null);
   const [error,setError]=useState("");
+  const [saved,setSaved]=useState([]);
   const set=(k,v)=>setCfg(c=>({...c,[k]:v}));
-  const SYS=`Du bist erfahrener G-Jugend (U7) Trainer in Hamburg (HFV). Erstelle altersgerechten Trainingsplan.
-Antworte NUR mit JSON: {"title":"","phases":[{"name":"","duration":10,"exercise":"","details":"","material":[],"tips":""}],"totalDuration":60,"generalTips":""}
-Kein Torhüter, Minitore. Wartezeiten minimieren.`;
-  const generate=async()=>{ setLoading(true);setError("");
-    const lib=cfg.useLib&&exercises.length>0?`\nVerfügbare Übungen:\n${exercises.slice(0,10).map(e=>`- ${e.title} (${CATS[e.category]?.label}, ${e.duration}min)`).join("\n")}`:"";
-    try{const r=await callClaude([{role:"user",content:`Trainingsplan für: ${cfg.kids} Kinder, ${cfg.coaches} Trainer, ${cfg.duration} Minuten${cfg.focus?`, Schwerpunkt: ${cfg.focus}`:""}${lib}`}],apiKey,SYS);const d=parseJsonSafe(r);if(!d?.phases)throw new Error("Ungültige Antwort");setPlan(d);}catch(e){setError(e.message);}setLoading(false); };
-  const phCol={"Aufwärmen":"#fff7ed","Hauptteil":"#eff6ff","Technik":"#eff6ff","Spielform":"#f0fdf4","Funino":"#f0fdf4","Abschluss":"#fdf2f8"};
-  const gc=n=>Object.entries(phCol).find(([k])=>n.toLowerCase().includes(k.toLowerCase()))?.[1]||"#f8fafc";
+  const togMat=m=>set("material",cfg.material.includes(m)?cfg.material.filter(x=>x!==m):[...cfg.material,m]);
+
+  const SYS=`Du bist erfahrener G-Jugend (U7) Trainer in Hamburg (HFV). Erstelle einen praxistauglichen, altersgerechten Trainingsplan.
+
+TYPISCHE STRUKTUR (60 Min – skaliere proportional):
+1. Ankommen & Freies Spiel (10 Min): Kinder spielen frei, kein Trainer-Input. Trainer bauen parallel auf.
+2. Aufwärmspiel (10-15 Min): Ein Bewegungsspiel mit allen Kindern. Einfache Regeln, viel Laufen, Ball dabei wenn möglich.
+3. Hauptteil (25-30 Min): Wähle je nach Trainer/Kind-Verhältnis (s.u.).
+4. Abschluss (5-10 Min): Freies Spiel oder Abschlussspielform.
+
+HAUPTTEIL-STRATEGIEN – wähle die passende:
+A) STATIONEN+ROTATION (bevorzugt bei ≥2 Trainern): Teams à 3-4 Kinder. N Trainer = N parallele Stationen. Rotation alle 5-10 Min. Beschreibe exakt: "Team 1→Station 2, Team 2 spielt gegen Team 3". Gleich starke Teams wenn möglich zusammen. Wenn Gruppen sehr ungleich: getrennt halten.
+B) ÜBUNG+SPIELFORM parallel: 1-2 Trainer machen Technikübung mit je 1-2 Teams, 1 Trainer betreut Spielform mit restlichen Teams.
+C) ROUND ROBIN: Alle Teams spielen Kurzspiele gegeneinander (z.B. 2x5 Min). Gut als Abschluss oder wenn viele Trainer da sind.
+D) NUR SPIELEN: Alle Kinder spielen, 1 Trainer pro Feld. Gut zur Abwechslung oder bei wenig Zeit.
+E) GEMEINSAM: Alle Kinder + alle Trainer bei gleicher Übung (nur für Aufwärmen geeignet).
+
+ROTATIONS-LOGIK: Bei 3 Trainern und 16 Kindern z.B.: 4 Teams à 4. Trainer 1 → Übung mit Teams 1+2, Trainer 2 → andere Übung mit Teams 3+4, Trainer 3 → Spielform. Nach 8 Min: Team 1 zu Trainer 2, Team 2 spielt gegen Team 3, Teams 3+4 zu Trainer 1.
+
+G-JUGEND REGELN: Kein Torhüter. Minitore oder Hütchentore. Spielformen 2v2/3v3/4v4. Max 3 Sätze Ansage. Spaß und Bewegung vor Technik.
+PRINZIPIEN: Kein Kind steht >2 Min. Einfacher Plan > komplexer Plan (Chaos vermeiden). Nur verfügbares Material nutzen. Kurze Übergänge planen.
+
+Nutze Übungen aus der Bibliothek wenn verfügbar. Wenn du eigene Übungen erfindest, liste sie unter newExercises damit der Trainer sie speichern kann.
+
+Antworte NUR mit JSON (kein Text davor/danach):
+{"title":"","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","material":[],"tips":"","stations":[{"label":"","teams":[""],"exercise":"","description":"","material":[]}],"rotationMinutes":0}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[]}]}`;
+
+  const generate=async()=>{
+    setLoading(true);setError("");
+    const lib=cfg.useLib&&exercises.length>0?`\nBibliothek (nutze diese wenn passend):\n${exercises.slice(0,15).map(e=>`- "${e.title}" (${CATS[e.category]?.label}, ${e.duration}min${e.material?.length?`, Material: ${e.material.join(",")}`:""})` ).join("\n")}`:"";
+    const msg=`Trainingsplan: ${cfg.kids} Kinder, ${cfg.coaches} Trainer, ${cfg.duration} Min, ${cfg.location==="indoor"?"Indoor (Halle)":"Outdoor"}${cfg.material.length?`, verfügbares Material: ${cfg.material.join(", ")}`:""}${cfg.focus?`, Schwerpunkt: ${cfg.focus}`:""}${lib}`;
+    try{const r=await callClaude([{role:"user",content:msg}],apiKey,SYS);const d=parseJsonSafe(r);if(!d?.phases)throw new Error("Ungültige Antwort – bitte erneut versuchen");setPlan(d);}catch(e){setError(e.message);}setLoading(false);
+  };
+
+  const phBg={free:"#f8fafc",warmup:"#fff7ed",stations:"#f0fdf4",game:"#eff6ff",exercise:"#f5f3ff"};
+  const phEmoji={free:"⚽",warmup:"🔥",stations:"🔄",game:"🏆",exercise:"🎯"};
+
   if(plan) return(<div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,fontWeight:800,color:C.text}}>{plan.title}</h3><span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalDuration} Min</span></div>
-    <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>{plan.phases.map((ph,i)=><div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}><div style={{background:gc(ph.name),padding:"8px 14px",display:"flex",justifyContent:"space-between"}}><div style={{fontWeight:800,fontSize:14,color:C.text}}>{ph.name}</div><div style={{fontSize:12,color:C.muted,fontWeight:600}}>⏱ {ph.duration} Min</div></div><div style={{padding:"10px 14px"}}><div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:4}}>{ph.exercise}</div><div style={{fontSize:13,color:C.muted,lineHeight:1.5,marginBottom:ph.material?.length?6:0}}>{ph.details}</div>{ph.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:ph.tips?6:0}}>{ph.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}{ph.tips&&<div style={{fontSize:12,color:"#7c3aed",fontStyle:"italic"}}>💡 {ph.tips}</div>}</div></div>)}</div>
-    {plan.generalTips&&<div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9",marginBottom:16}}><strong>💡 </strong>{plan.generalTips}</div>}
-    <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={()=>setPlan(null)} variant="secondary">Neu generieren</Btn><Btn onClick={onClose}>Schließen</Btn></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+      <h3 style={{margin:0,fontWeight:800,color:C.text}}>{plan.title}</h3>
+      <span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalDuration} Min</span>
+    </div>
+    {plan.teams?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
+      {plan.teams.map((t,i)=><span key={i} style={{padding:"3px 10px",borderRadius:20,background:TCOLORS[i%TCOLORS.length]+"22",color:TCOLORS[i%TCOLORS.length],fontSize:12,fontWeight:700,border:`1.5px solid ${TCOLORS[i%TCOLORS.length]}55`}}>{t.name} ({t.size} 👦)</span>)}
+    </div>}
+    <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:14}}>
+      {plan.phases.map((ph,i)=>{
+        const bg=phBg[ph.type]||"#f8fafc";
+        const emoji=phEmoji[ph.type]||"📋";
+        return(<div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
+          <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontWeight:800,fontSize:14,color:C.text}}>{emoji} {ph.name}</div>
+            <div style={{fontSize:12,color:C.muted,fontWeight:600}}>⏱ {ph.duration} Min</div>
+          </div>
+          <div style={{padding:"10px 14px"}}>
+            {ph.description&&<div style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:6}}>{ph.description}</div>}
+            {ph.setup&&<div style={{fontSize:12,color:C.muted,background:"#f8fafc",borderRadius:6,padding:"6px 10px",marginBottom:8}}>📐 {ph.setup}</div>}
+            {ph.stations?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:6}}>
+              {ph.rotationMinutes>0&&<div style={{fontSize:12,color:"#7c3aed",fontWeight:700,marginBottom:2}}>🔄 Rotation alle {ph.rotationMinutes} Min</div>}
+              {ph.stations.map((st,j)=><div key={j} style={{borderRadius:8,border:`1px solid ${C.border}`,padding:"8px 12px",background:"white"}}>
+                <div style={{fontWeight:700,fontSize:13,color:C.primary,marginBottom:2}}>{st.label}</div>
+                {st.teams?.length>0&&<div style={{fontSize:11,color:C.muted,marginBottom:3}}>👦 {st.teams.join(" · ")}</div>}
+                {st.exercise&&<div style={{fontSize:13,color:C.text,fontWeight:600}}>{st.exercise}</div>}
+                {st.description&&<div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginTop:2}}>{st.description}</div>}
+                {st.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:4}}>{st.material.map(m=><span key={m} style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
+              </div>)}
+            </div>}
+            {ph.material?.length>0&&!ph.stations?.length&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:4}}>{ph.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
+            {ph.tips&&<div style={{fontSize:12,color:"#7c3aed",fontStyle:"italic",marginTop:4}}>💡 {ph.tips}</div>}
+          </div>
+        </div>);
+      })}
+    </div>
+    {plan.generalTips&&<div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9",marginBottom:14}}><strong>💡 </strong>{plan.generalTips}</div>}
+    {plan.newExercises?.filter(ex=>ex.title).length>0&&<div style={{marginBottom:14}}>
+      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>🆕 Neue Übungen – in Bibliothek speichern</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {plan.newExercises.filter(ex=>ex.title).map((ex,i)=>{
+          const isSaved=saved.includes(i);
+          return(<div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${isSaved?"#22c55e":C.border}`,background:isSaved?"#f0fdf4":"white",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:13,color:C.text}}>{ex.title}</span><CatBadge cat={ex.category} small/></div>
+              {ex.description&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{ex.description.slice(0,90)}{ex.description.length>90?"…":""}</div>}
+            </div>
+            {isSaved?<span style={{fontSize:12,color:"#16a34a",fontWeight:700,flexShrink:0}}>✅ Gespeichert</span>:
+              onSaveEx&&<Btn sm onClick={()=>{onSaveEx({...ex,id:uid(),createdAt:now(),updatedAt:now(),rating:3,imageUrl:"",source:"KI-Trainingsplan",notes:ex.notes||""});setSaved(s=>[...s,i]);}}><Plus size={12}/> Speichern</Btn>}
+          </div>);
+        })}
+      </div>
+    </div>}
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
+      <Btn onClick={()=>{setPlan(null);setSaved([]);}} variant="secondary"><RefreshCw size={14}/> Neu generieren</Btn>
+      <Btn onClick={onClose}>Schließen</Btn>
+    </div>
   </div>);
+
   return(<div>
-    <div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9"}}>🤖 KI plant ein altersgerechtes Training mit minimalen Warte- und Stehzeiten.</div>
+    <div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9"}}>🤖 KI plant Stationen, Rotation und Spielzeit – optimiert für deine Trainer- und Kinderzahl.</div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
       <Inp label="Kinder heute" type="number" value={cfg.kids} onChange={e=>set("kids",Number(e.target.value))} min={4} style={{marginBottom:0}}/>
       <Inp label="Trainer" type="number" value={cfg.coaches} onChange={e=>set("coaches",Number(e.target.value))} min={1} style={{marginBottom:0}}/>
       <Inp label="Minuten" type="number" value={cfg.duration} onChange={e=>set("duration",Number(e.target.value))} min={20} style={{marginBottom:0}}/>
     </div>
-    <Inp label="Schwerpunkt (optional)" value={cfg.focus} onChange={e=>set("focus",e.target.value)} placeholder="Dribbeln, Passspiel, Spaß..."/>
+    <div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Ort</label>
+      <div style={{display:"flex",gap:8}}>
+        {[["outdoor","☀️ Outdoor"],["indoor","🏠 Indoor (Halle)"]].map(([k,l])=><button key={k} onClick={()=>set("location",k)} style={{flex:1,padding:"8px",borderRadius:8,border:`2px solid ${cfg.location===k?C.primary:C.border}`,background:cfg.location===k?C.accentL:"white",color:cfg.location===k?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>{l}</button>)}
+      </div>
+    </div>
+    <div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Verfügbares Material</label>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {MAT_OPTS.map(m=>{const on=cfg.material.includes(m);return<button key={m} onClick={()=>togMat(m)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${on?C.primary:C.border}`,background:on?C.accentL:"white",color:on?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>📦 {m}</button>;})}
+      </div>
+    </div>
+    <div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Schwerpunkt (optional)</label>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+        {["Dribbeln","Passspiel","Torschuss","Koordination","Zweikampf","Spaß & Spiel","Schnelligkeit","Teamwork","Raumgefühl","Funino"].map(s=>{const active=cfg.focus===s;return<button key={s} onClick={()=>set("focus",active?"":s)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${active?C.primary:C.border}`,background:active?C.accentL:"white",color:active?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>{s}</button>;})}
+      </div>
+      <input value={cfg.focus} onChange={e=>set("focus",e.target.value)} placeholder="Oder eigenen Schwerpunkt eingeben..." style={{width:"100%",padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit",color:C.text}}/>
+    </div>
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><input type="checkbox" id="ul" checked={cfg.useLib} onChange={e=>set("useLib",e.target.checked)} style={{width:16,height:16}}/><label htmlFor="ul" style={{fontSize:14,color:C.text,cursor:"pointer"}}>Meine Bibliothek berücksichtigen ({exercises.length} Übungen)</label></div>
     {error&&<div style={{color:"#ef4444",fontSize:13,marginBottom:12,fontWeight:600}}>❌ {error}</div>}
     <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={onClose} variant="secondary">Abbrechen</Btn><Btn onClick={generate} variant="ai" disabled={loading}>{loading?<><RefreshCw size={14} style={{animation:"spin 1s linear infinite"}}/> Plane...</>:<><Bot size={14}/> Training planen</>}</Btn></div>
@@ -762,7 +864,7 @@ function SessionForm({session,players,coaches,exercises,onSave,onClose}) {
         <div style={{fontSize:12,color:"#92400e"}}>Oder spezifische<br/>Spieler unten wählen</div>
       </div>
     </div>
-    {ms(coaches.filter(c=>c.active),form.coachIds,id=>tog("coachIds",id),"Trainer",c=>`${ROLES[c.role][0]}. ${c.name}`)}
+    {ms(coaches.filter(c=>c.active!==false),form.coachIds,id=>tog("coachIds",id),"Trainer",c=>c.name)}
     <div style={{marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
         <label style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Spieler ({form.playerIds.length}) <span style={{fontWeight:400,textTransform:"none",letterSpacing:0}}>– optional</span></label>
@@ -942,7 +1044,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
   </div>);
 }
 // ── TRAINING PAGE ─────────────────────────────────────────────────
-function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast}) {
+function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise}) {
   const [tab,setTab]=useState("history");
   const [modal,setModal]=useState(null);
   const sorted=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -975,7 +1077,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
     {tab==="teams"&&<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:20}}><h2 style={{margin:"0 0 6px",fontSize:18,fontWeight:800}}>Schnelle Teambildung</h2><p style={{margin:"0 0 16px",color:C.muted,fontSize:14}}>Teams bilden ohne Training zu protokollieren.</p><Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={16}/> Teams zusammenstellen</Btn></div>}
     {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="manual"&&<Modal title="📋 Training manuell planen" onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
-    {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} onClose={()=>setModal(null)} onSaveEx={onSaveExercise}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={teams=>{if(modal.data.session)onSaveSession({...modal.data.session,teams});setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
   </div>);
@@ -1179,10 +1281,14 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`gjugend_uebungen_${todayISO()}.json`);toast("Übungen exportiert");}}/>
       <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`gjugend_team_${todayISO()}.json`);toast("Team exportiert");}}/>
       <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={()=>{dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`gjugend_spieler_${todayISO()}.csv`);toast("CSV exportiert");}}/>
+      <EC icon="📅" title="Training" desc="Alle Trainingseinheiten" sub={`${sessions.length} Einheiten`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"sessions",sessions},`gjugend_training_${todayISO()}.json`);toast("Training exportiert");}}/>
+      <EC icon="🏆" title="Turniere" desc="Alle Turniere & Ergebnisse" sub={`${tournaments.length} Turniere`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"tournaments",tournaments},`gjugend_turniere_${todayISO()}.json`);toast("Turniere exportiert");}}/>
+      <EC icon="💰" title="Kassenbuch" desc="Einnahmen & Ausgaben" sub={`${kassenbuch.length} Einträge`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"kassenbuch",kassenbuch},`gjugend_kasse_${todayISO()}.json`);toast("Kassenbuch exportiert");}}/>
+      <EC icon="📋" title="Kassenbuch (CSV)" desc="Für Excel & Steuer" sub={`${kassenbuch.length} Einträge`} fn={()=>{dlCsv(kassenbuch,["date","description","amount","type","category"],`gjugend_kasse_${todayISO()}.csv`);toast("Kassenbuch CSV exportiert");}}/>
     </div>}/>
     <Sec title="📥 Importieren" ch={<div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"16px 18px"}}>
       <div style={{marginBottom:12}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Modus</label><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{[["merge","Zusammenführen"],["replace","Ersetzen ⚠️"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 14px",borderRadius:8,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",color:mode===k?C.primary:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{l}</button>)}</div></div>
-      <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:C.muted}}>Unterstützt: JSON Backup, Übungen-JSON, Team-JSON, Spieler-CSV</div>
+      <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:C.muted}}>Unterstützt: JSON Backup · Übungen · Team · Training · Turniere · Kassenbuch · Spieler-CSV</div>
       <Btn onClick={()=>ref.current.click()}><Upload size={14}/> Datei auswählen</Btn>
       <input ref={ref} type="file" accept=".json,.csv" onChange={doImport} style={{display:"none"}}/>
     </div>}/>
@@ -1255,7 +1361,7 @@ export default function App() {
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{setExercises(prev=>prev.filter(e=>e.id!==id));toast("Übung gelöscht");}} apiKey={apiKey} toast={toast}/>}
       {page==="team"     &&<TeamPage     players={players} coaches={coaches} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds})=>{setSessions(prev=>[...prev,{id:uid(),createdAt:now(),date:todayISO(),duration:60,location:"",weather:"",participantCount:"",coachIds,playerIds,exerciseIds:[],teams:[],notes:""}]);setPage("training");toast("Training angelegt ✓");}}/>}
-      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast}/>}
+      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
       {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)}/>}
