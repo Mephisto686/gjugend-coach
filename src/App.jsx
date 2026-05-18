@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.9.5";
+const APP_VERSION = "2.9.6";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -120,8 +120,10 @@ const doExport = async (content, filename, mimeType, toast) => {
 const dlJson = async (o, n, toast) => {
   const content = JSON.stringify(o, null, 2);
   const mime = 'application/json;charset=utf-8';
+  dbgLog(`dlJson called: ${n} (${content.length} chars)`);
   // Sofort synchron auslösen (User-Gesture-Context noch aktiv)
   const syncResult = saveFileSync(content, n, mime); // immer sync zuerst, picker nur als Desktop-Upgrade
+  dbgLog(`dlJson syncResult: ${syncResult}`);
   if (syncResult) { if(toast) toast(`📥 ${n} → Downloads`); return {ok:true,method:syncResult,filename:n}; }
   // Desktop: async Picker
   const r = await saveFile(content, n, mime);
@@ -1923,31 +1925,54 @@ function KassePage({kassenbuch,onSave,onDelete,toast}) {
 function DebugExportPanel({toast}) {
   const [log,setLog]=useState("");
   const refresh=()=>setLog(window._getExportLog()||"(noch kein Export versucht)");
-  const testExport=()=>{
-    dbgLog("=== TEST EXPORT GESTARTET ===");
-    dbgLog(`URL: ${window.location.href}`);
-    dbgLog(`Protocol: ${window.location.protocol}`);
-    dbgLog(`navigator.userAgent: ${navigator.userAgent}`);
-    dbgLog(`window.showSaveFilePicker: ${!!window.showSaveFilePicker}`);
-    dbgLog(`navigator.canShare: ${!!navigator.canShare}`);
-    dbgLog(`document.createElement: ${!!document.createElement}`);
-    const res = saveFileSync('{"test":1,"ok":true}', 'test_export.json', 'application/json');
-    dbgLog(`saveFileSync result: ${res}`);
-    refresh();
-    if(res) toast("Test-Export ausgelöst – schau in Downloads");
-    else toast("Test fehlgeschlagen – Log prüfen","err");
-  };
   const copyLog=()=>{
     const txt=window._getExportLog()||"(leer)";
     if(navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>toast("Log kopiert ✓"));
     else { const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast("Log kopiert ✓"); }
   };
+
+  const runTest=(label,content,filename)=>{
+    dbgLog(`=== ${label} ===`);
+    dbgLog(`Dateigröße: ${content.length} Zeichen`);
+    dbgLog(`showSaveFilePicker: ${!!window.showSaveFilePicker}`);
+    // Test 1: Blob
+    try {
+      const blob = new Blob([content],{type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href=url; a.download=filename; a.style.display='none';
+      document.body.appendChild(a); a.click();
+      setTimeout(()=>{URL.revokeObjectURL(url);document.body.removeChild(a);},1000);
+      dbgLog('Methode 1 (Blob+click): ausgelöst – prüfe Downloads-Ordner');
+    } catch(e){ dbgLog(`Methode 1 Fehler: ${e.message}`); }
+    // Test 2: data: URI
+    try {
+      const uri='data:application/json;charset=utf-8,'+encodeURIComponent(content);
+      const a2=document.createElement('a');
+      a2.href=uri; a2.download=filename+'_v2'; a2.style.display='none';
+      document.body.appendChild(a2); a2.click();
+      setTimeout(()=>document.body.removeChild(a2),500);
+      dbgLog('Methode 2 (data:URI+click): ausgelöst');
+    } catch(e){ dbgLog(`Methode 2 Fehler: ${e.message}`); }
+    // Test 3: window.open
+    try {
+      const uri3='data:application/json;charset=utf-8,'+encodeURIComponent(content);
+      const w=window.open(uri3,'_blank');
+      dbgLog(`Methode 3 (window.open): ${w?'Fenster geöffnet':'geblockt (null)'}`);
+    } catch(e){ dbgLog(`Methode 3 Fehler: ${e.message}`); }
+    refresh();
+  };
+
   return(<div>
-    <div style={{fontSize:13,color:C.muted,marginBottom:10}}>Testet den Export direkt und zeigt was intern passiert. Hilfreich zur Fehlerdiagnose in Hermit / WebView.</div>
+    <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Teste alle Download-Methoden direkt. Nach jedem Test: prüfe Downloads-Ordner auf neue Dateien.</div>
     <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-      <Btn sm onClick={testExport}>🧪 Test-Export starten</Btn>
-      <Btn sm variant="secondary" onClick={refresh}>🔄 Log aktualisieren</Btn>
+      <Btn sm onClick={()=>runTest("KLEIN (20 Bytes)",'{"test":1}','debug_klein.json')}>🧪 Klein (20 B)</Btn>
+      <Btn sm onClick={()=>runTest("GROSS (50 KB)",JSON.stringify({data:'x'.repeat(50000)}),'debug_gross.json')}>🧪 Groß (50 KB)</Btn>
+      <Btn sm variant="secondary" onClick={refresh}>🔄 Aktualisieren</Btn>
       <Btn sm variant="secondary" onClick={copyLog}>📋 Log kopieren</Btn>
+    </div>
+    <div style={{fontSize:12,color:"#854d0e",background:"#fef9c3",borderRadius:8,padding:"8px 12px",marginBottom:10,border:"1px solid #fde047"}}>
+      Nach jedem Test: Öffne Dateien-App → Downloads → schau ob debug_klein.json oder debug_gross.json da ist. Das zeigt welche Methode klappt.
     </div>
     {log&&<pre style={{background:"#0f172a",color:"#94a3b8",borderRadius:8,padding:"10px 12px",fontSize:11,lineHeight:1.6,overflowX:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",maxHeight:300,overflowY:"auto",fontFamily:"monospace"}}>{log}</pre>}
   </div>);
