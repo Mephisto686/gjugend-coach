@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.9.3";
+const APP_VERSION = "2.9.4";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -39,33 +39,49 @@ const now = () => new Date().toISOString();
 const fmtDate = s => s?new Date(s).toLocaleDateString("de-DE",{weekday:"short",day:"2-digit",month:"2-digit",year:"numeric"}):"";
 const todayISO = () => new Date().toISOString().split("T")[0];
 // ── SAVE FILE mit Dialog (Android/Desktop: zeigt "Speichern unter") ──
+// ── DEBUG EXPORT LOG ──────────────────────────────────────────────
+const _dbg = [];
+const dbgLog = (msg) => { _dbg.push(`${new Date().toISOString().slice(11,23)} ${msg}`); console.log('[EXPORT]', msg); };
+window._getExportLog = () => _dbg.join('\n');
+
 // Synchroner Download-Kern – muss direkt im Click-Handler aufgerufen werden
 // bevor irgendein await den User-Gesture-Context zerstört
 function saveFileSync(content, filename, mimeType) {
   const mime = mimeType || 'application/json;charset=utf-8';
+  dbgLog(`saveFileSync called: ${filename} (${content.length} chars, mime=${mime})`);
+  dbgLog(`showSaveFilePicker=${!!window.showSaveFilePicker} userAgent=${navigator.userAgent.slice(0,80)}`);
   // Versuch 1: Blob URL
   try {
     const blob = new Blob([content], {type: mime});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename; a.style.display = 'none';
-    document.body.appendChild(a); a.click();
+    document.body.appendChild(a);
+    dbgLog('Blob URL created, calling a.click()...');
+    a.click();
+    dbgLog('a.click() returned (blob)');
     setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 1000);
     return 'blob';
-  } catch(e) {}
-  // Versuch 2: data: URI (WebView/Hermit – Blob URL wird dort blockiert)
+  } catch(e) { dbgLog(`Blob method failed: ${e.name}: ${e.message}`); }
+  // Versuch 2: data: URI
   try {
     const dataUri = 'data:' + mime + ',' + encodeURIComponent(content);
+    dbgLog(`data: URI length=${dataUri.length}`);
     const a = document.createElement('a');
     a.href = dataUri; a.download = filename; a.style.display = 'none';
-    document.body.appendChild(a); a.click();
+    document.body.appendChild(a);
+    dbgLog('Calling a.click() (data: URI)...');
+    a.click();
+    dbgLog('a.click() returned (datauri)');
     setTimeout(() => document.body.removeChild(a), 500);
     return 'datauri';
-  } catch(e) {}
+  } catch(e) { dbgLog(`data: URI method failed: ${e.name}: ${e.message}`); }
+  dbgLog('All sync methods failed');
   return null;
 }
 
 const saveFile = async (content, filename, mimeType) => {
+  dbgLog(`saveFile async called: ${filename}`);
   // Desktop Chrome/Edge: zeige echten Speichern-Dialog
   if (window.showSaveFilePicker) {
     try {
@@ -81,12 +97,13 @@ const saveFile = async (content, filename, mimeType) => {
       const writable = await handle.createWritable();
       await writable.write(content);
       await writable.close();
+      dbgLog(`picker success: ${handle.name}`);
       return {ok:true, method:'picker', filename: handle.name};
     } catch(e) {
+      dbgLog(`picker failed: ${e.name}: ${e.message}`);
       if (e.name === 'AbortError') return {ok:false, method:'cancelled'};
     }
   }
-  // Alle anderen Browser/WebViews: synchron schon ausgelöst von Aufrufer
   return {ok:true, method:'sync', filename};
 };
 // Helper: führt Export durch und zeigt passenden Toast
@@ -1903,6 +1920,39 @@ function KassePage({kassenbuch,onSave,onDelete,toast}) {
 }
 
 // ── SETTINGS PAGE ─────────────────────────────────────────────────
+function DebugExportPanel({toast}) {
+  const [log,setLog]=useState("");
+  const refresh=()=>setLog(window._getExportLog()||"(noch kein Export versucht)");
+  const testExport=()=>{
+    dbgLog("=== TEST EXPORT GESTARTET ===");
+    dbgLog(`URL: ${window.location.href}`);
+    dbgLog(`Protocol: ${window.location.protocol}`);
+    dbgLog(`navigator.userAgent: ${navigator.userAgent}`);
+    dbgLog(`window.showSaveFilePicker: ${!!window.showSaveFilePicker}`);
+    dbgLog(`navigator.canShare: ${!!navigator.canShare}`);
+    dbgLog(`document.createElement: ${!!document.createElement}`);
+    const res = saveFileSync('{"test":1,"ok":true}', 'test_export.json', 'application/json');
+    dbgLog(`saveFileSync result: ${res}`);
+    refresh();
+    if(res) toast("Test-Export ausgelöst – schau in Downloads");
+    else toast("Test fehlgeschlagen – Log prüfen","err");
+  };
+  const copyLog=()=>{
+    const txt=window._getExportLog()||"(leer)";
+    if(navigator.clipboard) navigator.clipboard.writeText(txt).then(()=>toast("Log kopiert ✓"));
+    else { const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);toast("Log kopiert ✓"); }
+  };
+  return(<div>
+    <div style={{fontSize:13,color:C.muted,marginBottom:10}}>Testet den Export direkt und zeigt was intern passiert. Hilfreich zur Fehlerdiagnose in Hermit / WebView.</div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+      <Btn sm onClick={testExport}>🧪 Test-Export starten</Btn>
+      <Btn sm variant="secondary" onClick={refresh}>🔄 Log aktualisieren</Btn>
+      <Btn sm variant="secondary" onClick={copyLog}>📋 Log kopieren</Btn>
+    </div>
+    {log&&<pre style={{background:"#0f172a",color:"#94a3b8",borderRadius:8,padding:"10px 12px",fontSize:11,lineHeight:1.6,overflowX:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",maxHeight:300,overflowY:"auto",fontFamily:"monospace"}}>{log}</pre>}
+  </div>);
+}
+
 function AddCatForm({onAdd}) {
   const EMOJIS=["🌀","💡","🎪","🏃","🤸","🎭","🧩","⚡","🎈","🦁","🦊","🐬","🔴","🟠","🟡","🟢","🔵","🟣"];
   const [label,setLabel]=useState("");const [emoji,setEmoji]=useState("🌀");
@@ -1953,6 +2003,7 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       </div>
       <AddCatForm onAdd={cc=>onSaveCustomCats([...(customCats||[]),cc])}/>
     </div>}/>
+    <Sec title="🐛 Export Debug" ch={<DebugExportPanel toast={toast}/>}/>
     <div style={{textAlign:"center",padding:"20px 0",color:"#cbd5e1",fontSize:12}}>G-Jugend Coach v{APP_VERSION} · Made with ⚽ for G-Jugend Hamburg</div>
   </div>);
 }
