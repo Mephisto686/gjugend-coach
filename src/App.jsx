@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.9.1";
+const APP_VERSION = "2.9.2";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -41,16 +41,14 @@ const todayISO = () => new Date().toISOString().split("T")[0];
 // ── SAVE FILE mit Dialog (Android/Desktop: zeigt "Speichern unter") ──
 const saveFile = async (content, filename, mimeType) => {
   const mime = mimeType || 'application/octet-stream';
-  const blob = new Blob([content], {type: mime});
 
-  // Methode 1: File System Access API (Desktop Chrome/Edge, Android Chrome ≥ 86)
+  // Methode 1: File System Access API (Desktop Chrome/Edge – zeigt Speichern-Dialog)
   if (window.showSaveFilePicker) {
     try {
       const ext = filename.split('.').pop();
       const types = {
         json: [{description:'JSON Datei', accept:{'application/json':['.json']}}],
         csv:  [{description:'CSV Datei',  accept:{'text/csv':['.csv']}}],
-        html: [{description:'HTML Datei', accept:{'text/html':['.html']}}],
       };
       const handle = await window.showSaveFilePicker({
         suggestedName: filename,
@@ -62,33 +60,44 @@ const saveFile = async (content, filename, mimeType) => {
       return {ok:true, method:'picker', filename: handle.name};
     } catch(e) {
       if (e.name === 'AbortError') return {ok:false, method:'cancelled'};
+      // Fehler → weiter zu Methode 2
     }
   }
 
-  // Methode 2: Web Share API (Hermit/WebView, Android, iOS Safari)
-  // Öffnet natives Android-Teilen-Menü → "In Downloads speichern", Drive, etc.
-  if (navigator.canShare && navigator.canShare({files:[new File([blob],filename,{type:mime})]})) {
-    try {
-      await navigator.share({
-        files: [new File([blob], filename, {type: mime})],
-        title: filename,
-      });
-      return {ok:true, method:'share', filename};
-    } catch(e) {
-      if (e.name === 'AbortError') return {ok:false, method:'cancelled'};
-      // Share fehlgeschlagen → weiter zu Methode 3
-    }
-  }
-
-  // Methode 3: Blob <a download> – funktioniert in normalen Browsern (Firefox, älteres Edge)
+  // Methode 2: Blob URL (Chrome, Firefox, Edge – geht in Downloads-Ordner)
   try {
+    const blob = new Blob([content], {type: mime});
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = filename;
+    a.href = url; a.download = filename; a.style.display = 'none';
     document.body.appendChild(a); a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+    setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 1000);
     return {ok:true, method:'blob', filename};
-  } catch(e) { return {ok:false, method:'error'}; }
+  } catch(e) { /* weiter */ }
+
+  // Methode 3: data: URI (Hermit/WebView – Blob URL wird dort blockiert)
+  try {
+    const dataUri = mime.includes('json') || mime.includes('text')
+      ? 'data:' + mime + ';charset=utf-8,' + encodeURIComponent(content)
+      : 'data:' + mime + ';base64,' + btoa(unescape(encodeURIComponent(content)));
+    const a = document.createElement('a');
+    a.href = dataUri; a.download = filename; a.style.display = 'none';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => document.body.removeChild(a), 500);
+    return {ok:true, method:'datauri', filename};
+  } catch(e) { /* weiter */ }
+
+  // Methode 4: Neuen Tab öffnen (letzter Ausweg – Nutzer kann manuell speichern)
+  try {
+    const w = window.open('', '_blank');
+    if (w) {
+      w.document.write('<pre style="white-space:pre-wrap;word-break:break-all;font-size:12px">' + content.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>');
+      w.document.title = filename;
+      return {ok:true, method:'newtab', filename};
+    }
+  } catch(e) {}
+
+  return {ok:false, method:'error'};
 };
 // Helper: führt Export durch und zeigt passenden Toast
 const doExport = async (content, filename, mimeType, toast) => {
@@ -96,7 +105,8 @@ const doExport = async (content, filename, mimeType, toast) => {
   if (!r.ok && r.method === 'cancelled') return; // Nutzer hat abgebrochen
   if (!r.ok) { toast('Export fehlgeschlagen', 'err'); return; }
   if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
-  else if (r.method === 'share') toast(`📤 Geteilt: ${r.filename}`);
+  else if (r.method === 'datauri') toast(`📥 ${r.filename} gespeichert`);
+  else if (r.method === 'newtab') toast(`📋 ${r.filename} → Tab geöffnet, lange drücken → Speichern`);
   else toast(`📥 ${r.filename} → Downloads-Ordner`);
 };
 
@@ -106,7 +116,8 @@ const dlJson = async (o, n, toast) => {
   if (!r.ok && r.method === 'cancelled') return r;
   if (!r.ok) toast('Export fehlgeschlagen', 'err');
   else if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
-  else if (r.method === 'share') toast(`📤 Geteilt: ${r.filename}`);
+  else if (r.method === 'datauri') toast(`📥 ${r.filename} gespeichert`);
+  else if (r.method === 'newtab') toast(`📋 ${r.filename} → Tab geöffnet, lange drücken → Speichern`);
   else toast(`📥 ${r.filename} → Downloads-Ordner`);
   return r;
 };
@@ -117,7 +128,8 @@ const dlCsv  = async (rows, cols, n, toast) => {
   if (!r.ok && r.method === 'cancelled') return r;
   if (!r.ok) toast('Export fehlgeschlagen', 'err');
   else if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
-  else if (r.method === 'share') toast(`📤 Geteilt: ${r.filename}`);
+  else if (r.method === 'datauri') toast(`📥 ${r.filename} gespeichert`);
+  else if (r.method === 'newtab') toast(`📋 ${r.filename} → Tab geöffnet, lange drücken → Speichern`);
   else toast(`📥 ${r.filename} → Downloads-Ordner`);
   return r;
 };
