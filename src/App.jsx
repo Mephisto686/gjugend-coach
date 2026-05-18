@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.9.4";
+const APP_VERSION = "2.9.5";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -108,7 +108,7 @@ const saveFile = async (content, filename, mimeType) => {
 };
 // Helper: führt Export durch und zeigt passenden Toast
 const doExport = async (content, filename, mimeType, toast) => {
-  const syncResult = !window.showSaveFilePicker ? saveFileSync(content, filename, mimeType) : null;
+  const syncResult = saveFileSync(content, filename, mimeType);
   if (syncResult) { if(toast) toast(`📥 ${filename} → Downloads`); return; }
   const r = await saveFile(content, filename, mimeType);
   if (!r.ok && r.method === 'cancelled') return;
@@ -121,7 +121,7 @@ const dlJson = async (o, n, toast) => {
   const content = JSON.stringify(o, null, 2);
   const mime = 'application/json;charset=utf-8';
   // Sofort synchron auslösen (User-Gesture-Context noch aktiv)
-  const syncResult = !window.showSaveFilePicker ? saveFileSync(content, n, mime) : null;
+  const syncResult = saveFileSync(content, n, mime); // immer sync zuerst, picker nur als Desktop-Upgrade
   if (syncResult) { if(toast) toast(`📥 ${n} → Downloads`); return {ok:true,method:syncResult,filename:n}; }
   // Desktop: async Picker
   const r = await saveFile(content, n, mime);
@@ -136,7 +136,7 @@ const dlCsv = async (rows, cols, n, toast) => {
   const csv = [cols.join(','), ...rows.map(x => cols.map(k => `"${String(x[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
   const content = '\uFEFF' + csv;
   const mime = 'text/csv;charset=utf-8';
-  const syncResult = !window.showSaveFilePicker ? saveFileSync(content, n, mime) : null;
+  const syncResult = saveFileSync(content, n, mime);
   if (syncResult) { if(toast) toast(`📥 ${n} → Downloads`); return {ok:true,method:syncResult,filename:n}; }
   const r = await saveFile(content, n, mime);
   if (!toast || !r) return r;
