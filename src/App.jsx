@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.9.6";
+const APP_VERSION = "2.9.8";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -150,7 +150,7 @@ const dlCsv = async (rows, cols, n, toast) => {
 };
 const exportExJson = (ex) => dlJson(
   {version:APP_VERSION, exportDate:now(), type:'exercises', exercises:[ex]},
-  `uebung_${ex.title.replace(/[^a-z0-9]/gi,'_')}_${todayISO()}.json`
+  `GJugend_Uebung_${ex.title.replace(/[^a-z0-9äöüÄÖÜ]/gi,'_').slice(0,30)}_${todayISO()}.json`
 );
 
 const buildExHtml = (ex) => {
@@ -212,23 +212,51 @@ function buildTeams(players,numTeams,mode,skillDist) {
   if(!players.length||!numTeams) return [];
   const n=Math.max(1,numTeams);
   const teams=Array.from({length:n},(_,i)=>({id:uid(),name:`Team ${i+1}`,players:[]}));
-  if(mode==="balanced") {
-    shuffle(players).sort((a,b)=>b.strength-a.strength).forEach((p,i)=>{ const r=Math.floor(i/n);teams[r%2===0?i%n:n-1-(i%n)].players.push(p); });
+
+  // Snake-Draft: verteilt Spieler serpentinenartig → maximale Fairness
+  // Innerhalb gleicher Stärke: zufällig gemischt
+  // Garantiert: Teamgrößen unterscheiden sich um max. 1 Spieler
+  const snakeDraft=(pool,targetTeams)=>{
+    if(!pool.length||!targetTeams.length) return;
+    const tn=targetTeams.length;
+    // Innerhalb gleicher Stärke shufflen, dann nach Stärke absteigend sortieren
+    const byStr={};
+    pool.forEach(p=>{ (byStr[p.strength]=byStr[p.strength]||[]).push(p); });
+    const ordered=Object.keys(byStr).sort((a,b)=>b-a).flatMap(k=>shuffle(byStr[k]));
+    ordered.forEach((p,i)=>{
+      const round=Math.floor(i/tn), pos=i%tn;
+      const ti=round%2===0 ? pos : tn-1-pos; // links→rechts, rechts→links, ...
+      targetTeams[ti].players.push(p);
+    });
+  };
+
+  if(mode==="random") {
+    shuffle(players).forEach((p,i)=>teams[i%n].players.push(p));
+  } else if(mode==="balanced") {
+    snakeDraft(players,teams);
   } else if(mode==="mixed") {
+    // Jedes Stärke-Level gleichmäßig über alle Teams verteilen
     [4,3,2,1].forEach(s=>shuffle(players.filter(p=>p.strength===s)).forEach((p,i)=>teams[i%n].players.push(p)));
   } else if(mode==="challenge") {
-    shuffle(players).sort((a,b)=>b.strength-a.strength).forEach((p,i)=>teams[Math.min(n-1,Math.floor(i/Math.ceil(players.length/n)))].players.push(p));
+    // Starke gegen starke (geclustert): Team 0 bekommt die Stärksten
+    const sorted=[...players].sort((a,b)=>b.strength-a.strength);
+    sorted.forEach((p,i)=>teams[Math.min(n-1,Math.floor(i/Math.ceil(players.length/n)))].players.push(p));
   } else if(mode==="skill"&&skillDist) {
-    const strong=shuffle(players.filter(p=>p.strength>=3));
-    const weak=shuffle(players.filter(p=>p.strength<=2));
-    const {strong:nS=0,weak:nW=0}=skillDist; const nM=n-nS-nW;
-    let ti=0;
-    for(let i=0;i<nS&&ti<n;i++){const t=teams[ti++];strong.splice(0,Math.max(1,Math.ceil(strong.length/(nS-i)))).forEach(p=>t.players.push(p));}
-    for(let i=0;i<nW&&ti<n;i++){const t=teams[ti++];weak.splice(0,Math.max(1,Math.ceil(weak.length/(nW-i)))).forEach(p=>t.players.push(p));}
-    const rest=shuffle([...strong,...weak]);
-    for(let i=0;i<nM&&ti<n;i++){const t=teams[ti++];rest.splice(0,Math.max(1,Math.ceil(rest.length/(nM-i)))).forEach(p=>t.players.push(p));}
+    const {strong:nS=0,weak:nW=0}=skillDist;
+    const nM=n-nS-nW;
+    // Trenne Spieler in Gruppen
+    const strongP=players.filter(p=>p.strength>=3);
+    const weakP=players.filter(p=>p.strength<=2);
+    // Snake-Draft innerhalb jeder Gruppe
+    if(nS>0) snakeDraft(strongP, teams.slice(0,nS));
+    if(nW>0) snakeDraft(weakP,   teams.slice(nS,nS+nW));
+    if(nM>0) {
+      const usedIds=new Set([...teams.slice(0,nS),...teams.slice(nS,nS+nW)].flatMap(t=>t.players.map(p=>p.id)));
+      const rest=players.filter(p=>!usedIds.has(p.id));
+      snakeDraft(rest, teams.slice(nS+nW));
+    }
   } else {
-    shuffle(players).forEach((p,i)=>teams[i%n].players.push(p));
+    snakeDraft(players,teams);
   }
   return teams;
 }
@@ -736,7 +764,7 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
   const toggleSel=id=>setSelIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   const bulkExport=()=>{
     const sel=exercises.filter(e=>selIds.includes(e.id));
-    dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:sel},`uebungen_auswahl_${todayISO()}.json`,toast);
+    dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:sel},`GJugend_Uebungen-Auswahl_${sel.length}-Eintraege_${todayISO()}.json`,toast);
   };
 
   const handleImportJson=async e=>{
@@ -2001,14 +2029,14 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       {apiKey&&<div style={{marginTop:8,fontSize:12,color:"#16a34a",fontWeight:600}}>✅ API-Key aktiv – KI-Funktionen verfügbar</div>}
     </div>}/>
     <Sec title="📤 Exportieren" ch={<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`gjugend_backup_${todayISO()}.json`,toast)}/>
-      <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`gjugend_uebungen_${todayISO()}.json`,toast)}/>
-      <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`gjugend_team_${todayISO()}.json`,toast)}/>
-      <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={async()=>dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`gjugend_spieler_${todayISO()}.csv`,toast)}/>
-      <EC icon="📅" title="Training" desc="Alle Trainingseinheiten" sub={`${sessions.length} Einheiten`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"sessions",sessions},`gjugend_training_${todayISO()}.json`,toast)}/>
-      <EC icon="🏆" title="Turniere" desc="Alle Turniere & Ergebnisse" sub={`${tournaments.length} Turniere`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"tournaments",tournaments},`gjugend_turniere_${todayISO()}.json`,toast)}/>
-      <EC icon="💰" title="Kassenbuch" desc="Einnahmen & Ausgaben" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"kassenbuch",kassenbuch},`gjugend_kasse_${todayISO()}.json`,toast)}/>
-      <EC icon="📋" title="Kassenbuch (CSV)" desc="Für Excel & Steuer" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlCsv(kassenbuch,["date","description","amount","type","category"],`gjugend_kasse_${todayISO()}.csv`,toast)}/>
+      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast)}/>
+      <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`GJugend_Uebungen_${exercises.length}-Eintraege_${todayISO()}.json`,toast)}/>
+      <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`GJugend_Team_${players.length}-Spieler_${todayISO()}.json`,toast)}/>
+      <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={async()=>dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`GJugend_Spieler_${todayISO()}.csv`,toast)}/>
+      <EC icon="📅" title="Training" desc="Alle Trainingseinheiten" sub={`${sessions.length} Einheiten`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"sessions",sessions},`GJugend_Training_${sessions.length}-Einheiten_${todayISO()}.json`,toast)}/>
+      <EC icon="🏆" title="Turniere" desc="Alle Turniere & Ergebnisse" sub={`${tournaments.length} Turniere`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"tournaments",tournaments},`GJugend_Turniere_${tournaments.length}-Turniere_${todayISO()}.json`,toast)}/>
+      <EC icon="💰" title="Kassenbuch" desc="Einnahmen & Ausgaben" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"kassenbuch",kassenbuch},`GJugend_Kassenbuch_${kassenbuch.length}-Eintraege_${todayISO()}.json`,toast)}/>
+      <EC icon="📋" title="Kassenbuch (CSV)" desc="Für Excel & Steuer" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlCsv(kassenbuch,["date","description","amount","type","category"],`GJugend_Kassenbuch_${todayISO()}.csv`,toast)}/>
     </div>}/>
     <Sec title="📥 Importieren" ch={<div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"16px 18px"}}>
       <div style={{marginBottom:12}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Modus</label><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{[["merge","Zusammenführen"],["replace","Ersetzen ⚠️"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 14px",borderRadius:8,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",color:mode===k?C.primary:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{l}</button>)}</div></div>
