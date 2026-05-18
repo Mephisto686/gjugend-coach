@@ -6,21 +6,14 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.9.0";
-const BUILTIN_CATS = {
-  aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
-  koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
-  technik:      { label:"Technik",      emoji:"⚽", color:"#2563eb", bg:"#eff6ff", builtin:true },
-  spielform:    { label:"Spielform",    emoji:"🏆", color:"#16a34a", bg:"#f0fdf4", builtin:true },
-  abschluss:    { label:"Abschluss",   emoji:"🌅", color:"#db2777", bg:"#fdf2f8", builtin:true },
+const APP_VERSION = "2.1.1";
+const CATS = {
+  aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed" },
+  koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff" },
+  technik:      { label:"Technik",      emoji:"⚽", color:"#2563eb", bg:"#eff6ff" },
+  spielform:    { label:"Spielform",    emoji:"🏆", color:"#16a34a", bg:"#f0fdf4" },
+  abschluss:    { label:"Abschluss",   emoji:"🌅", color:"#db2777", bg:"#fdf2f8" },
 };
-// Will be overwritten at runtime with merged builtin+custom cats
-let CATS = {...BUILTIN_CATS};
-const CUSTOM_CAT_PALETTE = [
-  {color:"#0891b2",bg:"#ecfeff"},{color:"#65a30d",bg:"#f7fee7"},
-  {color:"#9333ea",bg:"#faf5ff"},{color:"#e11d48",bg:"#fff1f2"},
-  {color:"#0369a1",bg:"#f0f9ff"},{color:"#b45309",bg:"#fffbeb"},
-];
 const PTAGS = ["Dribbeln","Passspiel","Torschuss","Zweikampf","Koordination","Gleichgewicht","Reaktion","Schnelligkeit","Ausdauer","Teamwork","Spaß","Kreativität","Wettkampf","Funino","Motorik","Raumgefühl"];
 const PMAT  = ["Hütchen","Bälle","Minitore","Leibchen","Stangen","Reifen","Pylonen","Markierungsscheiben","Seilchen","Tore (groß)"];
 const STR = {
@@ -40,7 +33,7 @@ const fmtDate = s => s?new Date(s).toLocaleDateString("de-DE",{weekday:"short",d
 const todayISO = () => new Date().toISOString().split("T")[0];
 // ── SAVE FILE mit Dialog (Android/Desktop: zeigt "Speichern unter") ──
 const saveFile = async (content, filename, mimeType) => {
-  // Methode 1: File System Access API → zeigt echten Speichern-Dialog mit Ordnerwahl
+  // Methode 1: File System Access API (Desktop / Edge Android)
   if (window.showSaveFilePicker) {
     try {
       const ext = filename.split('.').pop();
@@ -56,13 +49,13 @@ const saveFile = async (content, filename, mimeType) => {
       const writable = await handle.createWritable();
       await writable.write(content);
       await writable.close();
-      return {ok:true, method:'picker', filename: handle.name};
+      return true;
     } catch(e) {
-      if (e.name === 'AbortError') return {ok:false, method:'cancelled'};
-      // API nicht unterstützt oder anderer Fehler → Blob-Fallback
+      if (e.name === 'AbortError') return false;
+      // Kein return – weiter zu Methode 2
     }
   }
-  // Methode 2: Blob-Download (geht in Downloads-Ordner)
+  // Methode 2: Blob + <a download> (Chrome Android, Firefox)
   try {
     const mime = mimeType || 'application/octet-stream';
     const blob = new Blob([content], {type: mime});
@@ -71,36 +64,22 @@ const saveFile = async (content, filename, mimeType) => {
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click();
     setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
-    return {ok:true, method:'blob', filename};
-  } catch(e) { return {ok:false, method:'error'}; }
-};
-// Helper: führt Export durch und zeigt passenden Toast
-const doExport = async (content, filename, mimeType, toast) => {
-  const r = await saveFile(content, filename, mimeType);
-  if (!r.ok && r.method === 'cancelled') return; // Nutzer hat abgebrochen
-  if (!r.ok) { toast('Export fehlgeschlagen', 'err'); return; }
-  if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
-  else toast(`📥 ${r.filename} → Downloads-Ordner`);
+    return true;
+  } catch(e) { /* weiter zu Methode 3 */ }
+  // Methode 3: data: URI + window.open (Hermit und andere Sandbox-Browser)
+  try {
+    const mime = mimeType || 'application/octet-stream';
+    const base64 = btoa(unescape(encodeURIComponent(content)));
+    const dataUri = `data:${mime};base64,${base64}`;
+    window.open(dataUri, '_blank');
+    return true;
+  } catch(e) { return false; }
 };
 
-const dlJson = async (o, n, toast) => {
-  const r = await saveFile(JSON.stringify(o, null, 2), n, 'application/json');
-  if (!toast || !r) return r;
-  if (!r.ok && r.method === 'cancelled') return r;
-  if (!r.ok) toast('Export fehlgeschlagen', 'err');
-  else if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
-  else toast(`📥 ${r.filename} → Downloads-Ordner`);
-  return r;
-};
-const dlCsv  = async (rows, cols, n, toast) => {
-  const csv = [cols.join(','), ...rows.map(x => cols.map(k => `"${String(x[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
-  const r = await saveFile('\uFEFF' + csv, n, 'text/csv;charset=utf-8;');
-  if (!toast || !r) return r;
-  if (!r.ok && r.method === 'cancelled') return r;
-  if (!r.ok) toast('Export fehlgeschlagen', 'err');
-  else if (r.method === 'picker') toast(`✅ Gespeichert: ${r.filename}`);
-  else toast(`📥 ${r.filename} → Downloads-Ordner`);
-  return r;
+const dlJson = async (o, n) => await saveFile(JSON.stringify(o, null, 2), n, 'application/json');
+const dlCsv  = async (r, c, n) => {
+  const csv = [c.join(','), ...r.map(x => c.map(k => `"${String(x[k] ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+  await saveFile('\uFEFF' + csv, n, 'text/csv;charset=utf-8;');
 };
 const exportExJson = (ex) => dlJson(
   {version:APP_VERSION, exportDate:now(), type:'exercises', exercises:[ex]},
@@ -162,9 +141,9 @@ const parseCsvPlayers = text=>{ const ls=text.trim().split("\n");if(ls.length<2)
 // → Fisher-Yates Shuffle löst das
 const shuffle = arr => { const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
 
-function buildTeams(players,numTeams,mode,skillDist) {
-  if(!players.length||!numTeams) return [];
-  const n=Math.max(1,numTeams);
+function buildTeams(players,perTeam,mode) {
+  if(!players.length||!perTeam) return [];
+  const n=Math.max(1,Math.floor(players.length/perTeam));
   const teams=Array.from({length:n},(_,i)=>({id:uid(),name:`Team ${i+1}`,players:[]}));
   if(mode==="balanced") {
     shuffle(players).sort((a,b)=>b.strength-a.strength).forEach((p,i)=>{ const r=Math.floor(i/n);teams[r%2===0?i%n:n-1-(i%n)].players.push(p); });
@@ -172,15 +151,6 @@ function buildTeams(players,numTeams,mode,skillDist) {
     [4,3,2,1].forEach(s=>shuffle(players.filter(p=>p.strength===s)).forEach((p,i)=>teams[i%n].players.push(p)));
   } else if(mode==="challenge") {
     shuffle(players).sort((a,b)=>b.strength-a.strength).forEach((p,i)=>teams[Math.min(n-1,Math.floor(i/Math.ceil(players.length/n)))].players.push(p));
-  } else if(mode==="skill"&&skillDist) {
-    const strong=shuffle(players.filter(p=>p.strength>=3));
-    const weak=shuffle(players.filter(p=>p.strength<=2));
-    const {strong:nS=0,weak:nW=0}=skillDist; const nM=n-nS-nW;
-    let ti=0;
-    for(let i=0;i<nS&&ti<n;i++){const t=teams[ti++];strong.splice(0,Math.max(1,Math.ceil(strong.length/(nS-i)))).forEach(p=>t.players.push(p));}
-    for(let i=0;i<nW&&ti<n;i++){const t=teams[ti++];weak.splice(0,Math.max(1,Math.ceil(weak.length/(nW-i)))).forEach(p=>t.players.push(p));}
-    const rest=shuffle([...strong,...weak]);
-    for(let i=0;i<nM&&ti<n;i++){const t=teams[ti++];rest.splice(0,Math.max(1,Math.ceil(rest.length/(nM-i)))).forEach(p=>t.players.push(p));}
   } else {
     shuffle(players).forEach((p,i)=>teams[i%n].players.push(p));
   }
@@ -188,21 +158,7 @@ function buildTeams(players,numTeams,mode,skillDist) {
 }
 
 // ── TOURNAMENT HELPERS ────────────────────────────────────────────
-const generateRR = teams => {
-  const n=teams.length, list=teams.map(t=>t.id);
-  if(n%2===1) list.push(null);
-  const rounds=[];
-  for(let r=0;r<list.length-1;r++){
-    const round=[];
-    for(let i=0;i<list.length/2;i++){
-      const h=list[i],a=list[list.length-1-i];
-      if(h&&a) round.push({id:uid(),homeId:h,awayId:a,homeScore:null,awayScore:null,played:false});
-    }
-    rounds.push(round);
-    list.splice(1,0,list.pop());
-  }
-  return shuffle(rounds).flat();
-};
+const generateRR = teams => { const m=[];for(let i=0;i<teams.length;i++)for(let j=i+1;j<teams.length;j++)m.push({id:uid(),homeId:teams[i].id,awayId:teams[j].id,homeScore:null,awayScore:null,played:false});return shuffle(m); };
 const calcStandings = (teams,matches) => {
   const t=teams.map(x=>({...x,pl:0,w:0,d:0,l:0,gf:0,ga:0,pts:0}));
   matches.filter(m=>m.played).forEach(m=>{ const h=t.find(x=>x.id===m.homeId),a=t.find(x=>x.id===m.awayId);if(!h||!a)return;h.pl++;a.pl++;h.gf+=m.homeScore;h.ga+=m.awayScore;a.gf+=m.awayScore;a.ga+=m.homeScore;if(m.homeScore>m.awayScore){h.w++;h.pts+=3;a.l++;}else if(m.homeScore<m.awayScore){a.w++;a.pts+=3;h.l++;}else{h.d++;h.pts++;a.d++;a.pts++;} });
@@ -211,9 +167,9 @@ const calcStandings = (teams,matches) => {
 
 // ── CLAUDE API ────────────────────────────────────────────────────
 async function callClaude(messages,apiKey,system) {
-  const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"};
+  const headers={"Content-Type":"application/json","anthropic-version":"2023-06-01"};
   if(apiKey) headers["x-api-key"]=apiKey;
-  const body={model:"claude-sonnet-4-20250514",max_tokens:messages[0]?.content?.length>500?4000:2000,messages};
+  const body={model:"claude-sonnet-4-20250514",max_tokens:2000,messages};
   if(system) body.system=system;
   const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers,body:JSON.stringify(body)});
   if(!res.ok){const e=await res.json();throw new Error(e.error?.message||`Fehler ${res.status}`);}
@@ -260,14 +216,7 @@ const Modal=({title,onClose,children,wide})=>(
   </div>
 );
 const CatBadge=({cat,small})=>{const c=CATS[cat];if(!c)return null;return<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:small?11:12,fontWeight:700,padding:small?"2px 8px":"3px 10px",borderRadius:20,background:c.bg,color:c.color,whiteSpace:"nowrap"}}>{c.emoji} {c.label}</span>;};
-const Stars=({value,onChange,readonly})=>{
-  const v=value||0;
-  return<div style={{display:"flex",gap:2,alignItems:"center"}}>
-    {[1,2,3,4,5].map(n=><span key={n} onClick={()=>{if(readonly)return;onChange?.(n===v?0:n);}} style={{cursor:readonly?"default":"pointer",fontSize:readonly?14:18,color:n<=v?"#f59e0b":"#e2e8f0",lineHeight:1,userSelect:"none"}}>★</span>)}
-    {!readonly&&v>0&&<button onClick={()=>onChange?.(0)} style={{fontSize:10,color:C.muted,background:"none",border:"none",cursor:"pointer",padding:"0 2px",marginLeft:2,fontFamily:"inherit"}}>✕</button>}
-    {v===0&&<span style={{fontSize:11,color:C.muted,marginLeft:2,fontStyle:"italic"}}>unbewertet</span>}
-  </div>;
-};
+const Stars=({value,onChange,readonly})=><div style={{display:"flex",gap:2}}>{[1,2,3,4,5].map(n=><span key={n} onClick={()=>!readonly&&onChange?.(n)} style={{cursor:readonly?"default":"pointer",fontSize:readonly?14:18,color:n<=value?"#f59e0b":"#e2e8f0",lineHeight:1}}>★</span>)}</div>;
 const StrBadge=({level,small})=>{const s=STR[level];if(!s)return null;return<span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:small?11:12,fontWeight:700,padding:"2px 10px",borderRadius:20,background:s.light,color:s.color}}>{s.emoji} {s.label}</span>;};
 const Inp=({label,style:st,...p})=><div style={{marginBottom:14}}>{label&&<label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>{label}</label>}<input {...p} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,color:C.text,background:"white",outline:"none",boxSizing:"border-box",...st}}/></div>;
 const Txta=({label,...p})=><div style={{marginBottom:14}}>{label&&<label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>{label}</label>}<textarea {...p} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,color:C.text,background:"white",outline:"none",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box"}}/></div>;
@@ -275,13 +224,6 @@ const Sel=({label,children,...p})=><div style={{marginBottom:14}}>{label&&<label
 const Btn=({children,variant="primary",sm,...p})=><button {...p} style={{padding:sm?"6px 14px":"9px 18px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:sm?13:14,fontFamily:"inherit",display:"inline-flex",alignItems:"center",gap:6,...(variant==="primary"?{background:C.primary,color:"white"}:variant==="danger"?{background:"#ef4444",color:"white"}:variant==="ai"?{background:"#6d28d9",color:"white"}:{background:"white",color:C.text,border:`1.5px solid ${C.border}`}),...p.style}}>{children}</button>;
 const Divider=()=><div style={{borderTop:`1px solid ${C.border}`,margin:"20px 0"}}/>;
 const Empty=({icon,title,sub,onAdd,addLabel})=><div style={{textAlign:"center",padding:"60px 24px",color:C.muted}}><div style={{fontSize:48,marginBottom:16}}>{icon}</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>{title}</div>{sub&&<div style={{fontSize:14,marginBottom:24}}>{sub}</div>}{onAdd&&<Btn onClick={onAdd}><Plus size={16}/> {addLabel}</Btn>}</div>;
-const Stepper=({value,onChange,min=1,max=99})=>(
-  <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:8,overflow:"hidden",background:"white",height:38}}>
-    <button onClick={()=>onChange(Math.max(min,value-1))} style={{width:38,height:"100%",border:"none",borderRight:`1px solid ${C.border}`,cursor:"pointer",background:"transparent",fontSize:20,color:value<=min?"#cbd5e1":C.text,lineHeight:1,flexShrink:0}}>−</button>
-    <div style={{flex:1,textAlign:"center",fontWeight:800,fontSize:16,color:C.text,minWidth:32}}>{value}</div>
-    <button onClick={()=>onChange(Math.min(max,value+1))} style={{width:38,height:"100%",border:"none",borderLeft:`1px solid ${C.border}`,cursor:"pointer",background:"transparent",fontSize:20,color:value>=max?"#cbd5e1":C.text,lineHeight:1,flexShrink:0}}>+</button>
-  </div>
-);
 
 // ── AI IMPORT ─────────────────────────────────────────────────────
 function AIImportModal({onSave,onClose,apiKey}) {
@@ -312,278 +254,34 @@ category: aufwaermen|koordination|technik|spielform|abschluss`;
 }
 
 // ── AI TRAINING PLAN ──────────────────────────────────────────────
-function AITrainingModal({players,exercises,onClose,apiKey,onSaveEx,onSaveSession,setup}) {
-  const MAT_OPTS=["Bälle","Hütchen","Leibchen","Minitore","Koordinationsleiter","Stangen","Reifen","Pylonen"];
-  const [cfg,setCfg]=useState({kids:setup?.kids||players.filter(p=>p.active).length||10,coaches:setup?.coachCount||1,duration:setup?.duration||60,focus:setup?.focus||"",useLib:true,location:setup?.location||"outdoor",material:[...MAT_OPTS]});
+function AITrainingModal({players,exercises,onClose,apiKey}) {
+  const [cfg,setCfg]=useState({kids:players.filter(p=>p.active).length,coaches:1,duration:60,focus:"",useLib:true});
   const [loading,setLoading]=useState(false);
   const [plan,setPlan]=useState(null);
   const [error,setError]=useState("");
-  const [saved,setSaved]=useState([]);
-  const [view,setView]=useState("config"); // config | plan | detail | replace
-  const [detailEx,setDetailEx]=useState(null);
-  const [replaceTarget,setReplaceTarget]=useState(null); // {phaseIdx,stationIdx,category}
-  const [hasDraft,setHasDraft]=useState(false);
   const set=(k,v)=>setCfg(c=>({...c,[k]:v}));
-  const togMat=m=>set("material",cfg.material.includes(m)?cfg.material.filter(x=>x!==m):[...cfg.material,m]);
-
-  useEffect(()=>{
-    db.kv.get("aiPlanDraft").then(row=>{
-      if(row?.value){const d=JSON.parse(row.value);if(d.plan){setPlan(d.plan);setView("plan");setHasDraft(true);}if(d.cfg)setCfg(c=>({...c,...d.cfg}));}
-    }).catch(()=>{});
-  },[]);
-
-  const saveDraft=(p,c)=>db.kv.put({key:"aiPlanDraft",value:JSON.stringify({plan:p,cfg:c,savedAt:now()})}).catch(()=>{});
-  const clearDraft=()=>db.kv.delete("aiPlanDraft").catch(()=>{});
-
-  const SYS=`Du bist erfahrener G-Jugend (U7) Trainer in Hamburg (HFV). Erstelle einen praxistauglichen Trainingsplan als strukturiertes BRIEFING – so klar, dass jeder Trainer sofort weiß was wann zu tun ist.
-
-TRAININGSSTRUKTUR (60 Min, skaliere proportional):
-1. ANKOMMEN (10 Min): Freies Spiel, kein Trainer-Input. Trainer nutzen diese Zeit um Stationen aufzubauen. Schreibe explizit: "Trainer bauen in dieser Zeit Station X auf."
-2. AUFWÄRMEN (10-15 Min): Alle zusammen, einfaches Bewegungsspiel.
-3. HAUPTTEIL (25-30 Min): Stationen/Gruppen/Spielformen.
-4. ABSCHLUSS (5-10 Min): Freies Spiel oder kurze Spielform.
-
-HAUPTTEIL – wähle passende Strategie:
-A) STATIONEN+ROTATION (≥2 Trainer): Beschreibe exakt: "Team 1 (4 Kinder) → Station A mit Trainer 1. Team 2 (4 Kinder) → Station B mit Trainer 2. Team 3+4 spielen auf Feld C ohne Trainer. Nach 8 Min: Pfiff → Team 1 geht zu B, Team 2 zu C, Team 3+4 zu A."
-B) PARALLEL: Teile in zwei Gruppen, jede hat eigene Aufgabe.
-C) ALLE ZUSAMMEN: Alle machen gleichzeitig dasselbe.
-D) ROUND ROBIN: Kurze Spiele, jeder gegen jeden.
-
-FÜR JEDE PHASE schreibe:
-- Was passiert genau (Schritt für Schritt)
-- Wer macht was (welches Team, welcher Trainer)
-- Wann und wie rotiert wird (exakte Ansage: "Pfiff nach 8 Min: Team 1 rückt zu Station 2")
-- Was Trainer parallel aufbauen sollen
-- Wie viele Kinder wo aktiv sind
-
-G-JUGEND: Kein Torwart. Minitore/Hütchentore. 2v2 bis 4v4. Max 3 Sätze Ansage. Spaß > Perfektion. Nie >2 Min Leerlauf.
-
-Nutze Bibliotheksübungen wenn verfügbar. Neue Übungen detailliert unter newExercises mit sketchPrompt.
-
-Antworte NUR mit JSON:
-{"title":"","briefing":"Kurze Zusammenfassung des Trainings in 2 Sätzen für alle Trainer","phases":[{"name":"","duration":10,"type":"free|warmup|stations|game|exercise","description":"","setup":"","exerciseTitle":"","material":[],"tips":"","playerDistribution":"","minCoaches":1,"rotationMinutes":0,"rotationInstruction":"z.B. Nach 8 Min Pfiff: Team 1→Station 2, Team 2→Station 3, Team 3→Station 1","trainerTask":"Was Trainer in dieser Phase parallel tun sollen (z.B. Station aufbauen)","stations":[{"label":"","teams":[""],"exercise":"","description":"","setup":"","playerCount":"","trainerNeeded":false,"material":[]}]}],"teams":[{"name":"","size":4}],"totalDuration":60,"generalTips":"","newExercises":[{"title":"","category":"technik","description":"","setup":"","material":[],"minPlayers":4,"maxPlayers":12,"duration":10,"tags":[],"coachingPoints":[],"variante":{"leichter":"","schwerer":""},"playerCount":"","sketchPrompt":""}]}`;
-
-  const generate=async()=>{
-    setLoading(true);setError("");
-    const lib=cfg.useLib&&exercises.length>0?`\nBibliothek:\n${exercises.slice(0,15).map(e=>`- "${e.title}" (${CATS[e.category]?.label}, ${e.duration}min${e.material?.length?`, Mat: ${e.material.join(",")}`:""})` ).join("\n")}`:"";
-    const msg=`${cfg.kids} Kinder, ${cfg.coaches} Trainer, ${cfg.duration} Min, ${cfg.location==="indoor"?"Indoor (Halle)":"Outdoor"}. Material: ${cfg.material.join(", ") || "–"}${cfg.focus?`. Schwerpunkt: ${cfg.focus}`:""}${lib}`;
-    try{
-      const r=await callClaude([{role:"user",content:msg}],apiKey,SYS);
-      const d=parseJsonSafe(r);
-      if(!d?.phases)throw new Error("Ungültige Antwort – bitte erneut versuchen");
-      setPlan(d);setView("plan");saveDraft(d,cfg);
-    }catch(e){setError(e.message);}
-    setLoading(false);
-  };
-
-  const findLib=title=>exercises.find(e=>e.title?.toLowerCase()===title?.toLowerCase());
-
-  const openDetail=(title,desc,setup,mat,cat,tips)=>{
-    const lib=findLib(title);
-    setDetailEx(lib||{title:title||"",description:desc||"",setup:setup||"",material:mat||[],category:cat||"technik",tips:tips||"",id:null});
-    setView("detail");
-  };
-
-  const openReplace=(phaseIdx,stationIdx,category)=>{setReplaceTarget({phaseIdx,stationIdx,category});setView("replace");};
-
-  const doReplace=ex=>{
-    if(!replaceTarget)return;
-    const {phaseIdx,stationIdx}=replaceTarget;
-    setPlan(p=>{
-      const phases=p.phases.map((ph,i)=>{
-        if(i!==phaseIdx)return ph;
-        if(stationIdx!=null){
-          const stations=(ph.stations||[]).map((st,j)=>j!==stationIdx?st:{...st,exercise:ex.title,description:ex.description||"",setup:ex.setup||"",material:ex.material||[]});
-          return {...ph,stations};
-        }
-        return {...ph,exerciseTitle:ex.title,description:ex.description||ph.description,setup:ex.setup||ph.setup,material:ex.material||ph.material};
-      });
-      const np={...p,phases};saveDraft(np,cfg);return np;
-    });
-    setView("plan");setReplaceTarget(null);
-  };
-
-  const getExIds=()=>{
-    const ids=new Set();
-    plan?.phases?.forEach(ph=>{
-      if(ph.stations){ph.stations.forEach(st=>{const e=findLib(st.exercise);if(e)ids.add(e.id);});}
-      else{const e=findLib(ph.exerciseTitle);if(e)ids.add(e.id);}
-    });
-    return[...ids];
-  };
-
-  const saveAsTraining=()=>{
-    if(!onSaveSession)return;
-    const draft={id:uid(),createdAt:now(),date:setup?.date||todayISO(),duration:cfg.duration,location:cfg.location==="indoor"?"Halle":"",weather:"",participantCount:String(cfg.kids),coachIds:setup?.coachIds||[],playerIds:setup?.playerIds||[],exerciseIds:getExIds(),teams:[],notes:`📋 KI-Entwurf: ${plan.title}${plan.generalTips?'\n💡 '+plan.generalTips:""}`,isDraft:true};
-    onSaveSession(draft);clearDraft();onClose();
-  };
-
-  const phBg={free:"#f8fafc",warmup:"#fff7ed",stations:"#f0fdf4",game:"#eff6ff",exercise:"#f5f3ff"};
-  const phEmoji={free:"⚽",warmup:"🔥",stations:"🔄",game:"🏆",exercise:"🎯"};
-  const ReplBtn=({onClick})=><button onClick={onClick} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,cursor:"pointer",fontSize:11,color:C.muted,padding:"2px 8px",fontFamily:"inherit",flexShrink:0,whiteSpace:"nowrap"}}>🔄 Ersetzen</button>;
-  const ExLink=({title,desc,setup,mat,cat,tips})=>title?<button onClick={()=>openDetail(title,desc,setup,mat,cat,tips)} style={{fontWeight:700,fontSize:13,color:C.primary,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline",textAlign:"left"}}>{title}{findLib(title)?" 📚":""}</button>:null;
-
-  // ── DETAIL VIEW ────────────────────────────────────────────────────
-  if(view==="detail"&&detailEx) return(<div>
-    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-      <Btn sm variant="secondary" onClick={()=>setView("plan")}>← Plan</Btn>
-      {detailEx.category&&<CatBadge cat={detailEx.category}/>}
-      {!detailEx.id&&<span style={{fontSize:11,color:C.muted,padding:"2px 8px",background:"#faf5ff",borderRadius:20,border:"1px solid #e9d5ff"}}>🤖 KI-Übung</span>}
-    </div>
-    <h3 style={{margin:"0 0 14px",fontWeight:800,color:C.text,fontSize:17}}>{detailEx.title}</h3>
-    {detailEx.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,color:C.text,lineHeight:1.6,border:`1px solid ${C.border}`}}>{detailEx.setup}</div></div>}
-    {detailEx.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,color:C.text,lineHeight:1.6,border:`1px solid ${C.border}`}}>{detailEx.description}</div></div>}
-    {detailEx.tips&&<div style={{marginBottom:12,background:"#faf5ff",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#6d28d9",border:"1px solid #e9d5ff"}}>💡 {detailEx.tips}</div>}
-    {detailEx.material?.length>0&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>📦 Material</div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{detailEx.material.map(m=><span key={m} style={{padding:"4px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div></div>}
-    {detailEx.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{detailEx.tags.map(t=><span key={t} style={{padding:"3px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}</div>}
-    {detailEx.notes&&<div style={{marginTop:12,fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {detailEx.notes}</div>}
-    <div style={{marginTop:20,paddingTop:16,borderTop:`1px solid ${C.border}`,display:"flex",gap:8,justifyContent:"flex-end"}}>
-      <Btn sm variant="secondary" onClick={()=>setView("plan")}>← Zurück zum Plan</Btn>
-    </div>
+  const SYS=`Du bist erfahrener G-Jugend (U7) Trainer in Hamburg (HFV). Erstelle altersgerechten Trainingsplan.
+Antworte NUR mit JSON: {"title":"","phases":[{"name":"","duration":10,"exercise":"","details":"","material":[],"tips":""}],"totalDuration":60,"generalTips":""}
+Kein Torhüter, Minitore. Wartezeiten minimieren.`;
+  const generate=async()=>{ setLoading(true);setError("");
+    const lib=cfg.useLib&&exercises.length>0?`\nVerfügbare Übungen:\n${exercises.slice(0,10).map(e=>`- ${e.title} (${CATS[e.category]?.label}, ${e.duration}min)`).join("\n")}`:"";
+    try{const r=await callClaude([{role:"user",content:`Trainingsplan für: ${cfg.kids} Kinder, ${cfg.coaches} Trainer, ${cfg.duration} Minuten${cfg.focus?`, Schwerpunkt: ${cfg.focus}`:""}${lib}`}],apiKey,SYS);const d=parseJsonSafe(r);if(!d?.phases)throw new Error("Ungültige Antwort");setPlan(d);}catch(e){setError(e.message);}setLoading(false); };
+  const phCol={"Aufwärmen":"#fff7ed","Hauptteil":"#eff6ff","Technik":"#eff6ff","Spielform":"#f0fdf4","Funino":"#f0fdf4","Abschluss":"#fdf2f8"};
+  const gc=n=>Object.entries(phCol).find(([k])=>n.toLowerCase().includes(k.toLowerCase()))?.[1]||"#f8fafc";
+  if(plan) return(<div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,fontWeight:800,color:C.text}}>{plan.title}</h3><span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalDuration} Min</span></div>
+    <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>{plan.phases.map((ph,i)=><div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}><div style={{background:gc(ph.name),padding:"8px 14px",display:"flex",justifyContent:"space-between"}}><div style={{fontWeight:800,fontSize:14,color:C.text}}>{ph.name}</div><div style={{fontSize:12,color:C.muted,fontWeight:600}}>⏱ {ph.duration} Min</div></div><div style={{padding:"10px 14px"}}><div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:4}}>{ph.exercise}</div><div style={{fontSize:13,color:C.muted,lineHeight:1.5,marginBottom:ph.material?.length?6:0}}>{ph.details}</div>{ph.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:ph.tips?6:0}}>{ph.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}{ph.tips&&<div style={{fontSize:12,color:"#7c3aed",fontStyle:"italic"}}>💡 {ph.tips}</div>}</div></div>)}</div>
+    {plan.generalTips&&<div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9",marginBottom:16}}><strong>💡 </strong>{plan.generalTips}</div>}
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={()=>setPlan(null)} variant="secondary">Neu generieren</Btn><Btn onClick={onClose}>Schließen</Btn></div>
   </div>);
-
-  // ── REPLACE VIEW ───────────────────────────────────────────────────
-  if(view==="replace"&&replaceTarget){
-    const cat=replaceTarget.category;
-    const pool=exercises.filter(e=>!cat||e.category===cat);
-    const all=pool.length>0?pool:exercises;
-    return(<div>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-        <Btn sm variant="secondary" onClick={()=>setView("plan")}>← Plan</Btn>
-        <span style={{fontWeight:700,color:C.text}}>Übung ersetzen</span>
-        {cat&&<CatBadge cat={cat} small/>}
-      </div>
-      {all.length===0?<div style={{textAlign:"center",padding:"30px 0",color:C.muted,fontSize:14}}>Keine Übungen in der Bibliothek.<br/>Füge zuerst Übungen in der Bibliothek hinzu.</div>:
-        <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:420,overflowY:"auto"}}>
-          {all.map(ex=><div key={ex.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"white",flexWrap:"wrap"}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:2}}><span style={{fontWeight:700,fontSize:13,color:C.text}}>{ex.title}</span><CatBadge cat={ex.category} small/></div>
-              {ex.description&&<div style={{fontSize:12,color:C.muted,lineHeight:1.4}}>{ex.description.slice(0,90)}{ex.description.length>90?"…":""}</div>}
-            </div>
-            <Btn sm onClick={()=>doReplace(ex)}>Verwenden</Btn>
-          </div>)}
-        </div>}
-    </div>);
-  }
-
-  // ── PLAN VIEW ──────────────────────────────────────────────────────
-  if(plan&&view==="plan") return(<div>
-    {hasDraft&&<div style={{background:"#fffbeb",borderRadius:8,padding:"8px 12px",marginBottom:12,border:"1px solid #fde68a",fontSize:12,color:"#92400e",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <span>📋 Entwurf wiederhergestellt</span>
-      <button onClick={()=>{setPlan(null);setView("config");clearDraft();setHasDraft(false);}} style={{background:"none",border:"none",cursor:"pointer",color:"#dc2626",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>✕ Verwerfen</button>
-    </div>}
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-      <h3 style={{margin:0,fontWeight:800,color:C.text,fontSize:16}}>{plan.title}</h3>
-      <span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalDuration} Min · {cfg.location==="indoor"?"🏠 Halle":"☀️ Outdoor"}</span>
-    </div>
-    {plan.briefing&&<div style={{background:"#f0fdf4",borderRadius:10,padding:"10px 14px",marginBottom:12,border:"1px solid #bbf7d0",fontSize:14,color:"#15803d",fontWeight:600,lineHeight:1.5}}>📋 {plan.briefing}</div>}
-    {plan.teams?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
-      {plan.teams.map((t,i)=><span key={i} style={{padding:"3px 10px",borderRadius:20,background:TCOLORS[i%TCOLORS.length]+"22",color:TCOLORS[i%TCOLORS.length],fontSize:12,fontWeight:700,border:`1.5px solid ${TCOLORS[i%TCOLORS.length]}55`}}>{t.name} ({t.size}👦)</span>)}
-    </div>}
-    <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:14}}>
-      {plan.phases.map((ph,i)=>{
-        const bg=phBg[ph.type]||"#f8fafc";
-        const em=phEmoji[ph.type]||"📋";
-        const catForReplace=ph.type==="warmup"?"aufwaermen":ph.type==="game"?"spielform":ph.type==="exercise"?"technik":null;
-        return(<div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
-          <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:6}}>
-            <div style={{fontWeight:800,fontSize:14,color:C.text}}>{em} {ph.name}</div>
-            <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
-              <span style={{fontSize:12,color:C.muted,fontWeight:600}}>⏱ {ph.duration}m</span>
-              {ph.type!=="free"&&ph.type!=="stations"&&<ReplBtn onClick={()=>openReplace(i,null,catForReplace)}/>}
-            </div>
-          </div>
-          <div style={{padding:"10px 14px"}}>
-            {ph.exerciseTitle&&<div style={{marginBottom:4}}><ExLink title={ph.exerciseTitle} desc={ph.description} setup={ph.setup} mat={ph.material} cat={ph.type} tips={ph.tips}/></div>}
-            {ph.description&&<div style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:6,opacity:ph.exerciseTitle?0.7:1}}>{ph.description}</div>}
-            {ph.setup&&<div style={{fontSize:12,color:C.muted,background:"#f8fafc",borderRadius:6,padding:"6px 10px",marginBottom:6}}>📐 {ph.setup}</div>}
-            {ph.stations?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:4}}>
-              {ph.rotationMinutes>0&&<div style={{fontSize:12,color:"#7c3aed",fontWeight:700}}>🔄 Rotation alle {ph.rotationMinutes} Min</div>}
-              {ph.stations.map((st,j)=><div key={j} style={{borderRadius:8,border:`1px solid ${C.border}`,padding:"8px 12px",background:"white"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6,marginBottom:3}}>
-                  <div style={{fontWeight:700,fontSize:13,color:C.primary}}>{st.label}</div>
-                  <ReplBtn onClick={()=>openReplace(i,j,"technik")}/>
-                </div>
-                {st.teams?.length>0&&<div style={{fontSize:11,color:C.muted,marginBottom:3}}>👦 {st.teams.join(" · ")}</div>}
-                <ExLink title={st.exercise} desc={st.description} setup={st.setup} mat={st.material} cat="technik" tips=""/>
-                {st.description&&<div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginTop:2}}>{st.description}</div>}
-                {st.playerCount&&<div style={{fontSize:11,color:"#0369a1",fontWeight:700,marginTop:3}}>👥 {st.playerCount}{st.trainerNeeded?" · 🧑‍🏫 Trainer nötig":""}</div>}
-                {st.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:4}}>{st.material.map(m=><span key={m} style={{fontSize:10,padding:"2px 6px",borderRadius:10,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
-              </div>)}
-            </div>}
-            {ph.material?.length>0&&!ph.stations?.length&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:4}}>{ph.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
-            {ph.playerDistribution&&<div style={{fontSize:12,background:"#f0f9ff",borderRadius:6,padding:"5px 10px",marginTop:4,color:"#0369a1",fontWeight:600}}>👥 {ph.playerDistribution}{ph.minCoaches>0?` · 🧑‍🏫 min. ${ph.minCoaches} Trainer`:""}</div>}
-            {ph.rotationInstruction&&<div style={{fontSize:12,background:"#fef9c3",borderRadius:6,padding:"6px 10px",marginTop:4,color:"#92400e",fontWeight:600,lineHeight:1.5}}>🔄 {ph.rotationInstruction}</div>}
-            {ph.trainerTask&&<div style={{fontSize:12,background:"#faf5ff",borderRadius:6,padding:"5px 10px",marginTop:4,color:"#6d28d9",fontWeight:600}}>🧑‍🏫 Trainer: {ph.trainerTask}</div>}
-            {ph.tips&&<div style={{fontSize:12,color:"#7c3aed",fontStyle:"italic",marginTop:4}}>💡 {ph.tips}</div>}
-          </div>
-        </div>);
-      })}
-    </div>
-    {plan.generalTips&&<div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9",marginBottom:12}}><strong>💡 </strong>{plan.generalTips}</div>}
-    {plan.newExercises?.filter(ex=>ex.title).length>0&&<div style={{marginBottom:12}}>
-      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>🆕 Neue Übungen speichern</div>
-      <div style={{display:"flex",flexDirection:"column",gap:6}}>
-        {plan.newExercises.filter(ex=>ex.title).map((ex,i)=>{
-          const isSaved=saved.includes(i);
-          return(<div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${isSaved?"#22c55e":C.border}`,background:isSaved?"#f0fdf4":"white",flexWrap:"wrap"}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:13,color:C.text}}>{ex.title}</span><CatBadge cat={ex.category} small/></div>
-              {ex.playerCount&&<div style={{fontSize:11,color:"#0369a1",fontWeight:700,marginTop:2}}>👥 {ex.playerCount}</div>}
-            {ex.description&&<div style={{fontSize:12,color:C.muted,marginTop:2}}>{ex.description.slice(0,100)}{ex.description.length>100?"…":""}</div>}
-            {ex.coachingPoints?.length>0&&<div style={{fontSize:11,color:"#7c3aed",marginTop:3}}>💡 {ex.coachingPoints[0]}</div>}
-            </div>
-            {isSaved?<span style={{fontSize:12,color:"#16a34a",fontWeight:700,flexShrink:0}}>✅ Gespeichert</span>:
-              onSaveEx&&<Btn sm onClick={async()=>{
-  let imageUrl="";
-  if(ex.sketchPrompt&&apiKey){
-    try{
-      const r=await callClaude([{role:"user",content:`Erstelle eine einfache, klare Trainingsskizze als SVG für diese Übung. Nutze: Kreise für Spieler, Dreiecke/Hütchen für Aufbau, Pfeile für Bewegungsrichtungen. Schwarz-weiß. Beschriftung auf Deutsch. Gib NUR valides SVG zurück, kein anderer Text.\n\nÜbung: ${ex.title}\nAufbau: ${ex.sketchPrompt}`}],apiKey);
-      const svg=r.match(/<svg[\s\S]*<\/svg>/)?.[0];
-      if(svg) imageUrl="data:image/svg+xml;base64,"+btoa(unescape(encodeURIComponent(svg)));
-    }catch(e){}
-  }
-  const notes=[ex.coachingPoints?.length?`💡 Tipps:\n${ex.coachingPoints.map(t=>`• ${t}`).join("\n")}`:"",ex.variante?.leichter?`📉 Leichter: ${ex.variante.leichter}`:"",ex.variante?.schwerer?`📈 Schwerer: ${ex.variante.schwerer}`:""].filter(Boolean).join("\n\n");
-  onSaveEx({...ex,id:uid(),createdAt:now(),updatedAt:now(),rating:0,done:false,imageUrl,source:"KI-Trainingsplan",notes});
-  setSaved(s=>[...s,i]);
-}}><Plus size={12}/> Speichern{ex.sketchPrompt?" + Skizze":""}</Btn>}
-          </div>);
-        })}
-      </div>
-    </div>}
-    <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap",paddingTop:14,borderTop:`1px solid ${C.border}`}}>
-      <Btn onClick={()=>{setPlan(null);setView("config");}} variant="secondary"><RefreshCw size={14}/> Neu generieren</Btn>
-      {onSaveSession&&<Btn onClick={saveAsTraining}><CalendarDays size={14}/> Als Entwurf speichern</Btn>}
-    </div>
-  </div>);
-
-  // ── CONFIG VIEW ────────────────────────────────────────────────────
   return(<div>
-    <div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9"}}>🤖 KI plant Stationen, Rotation und Spielzeit – optimiert für Trainer- und Kinderzahl. Plan wird automatisch als Entwurf gespeichert.</div>
+    <div style={{background:"#faf5ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #e9d5ff",fontSize:13,color:"#6d28d9"}}>🤖 KI plant ein altersgerechtes Training mit minimalen Warte- und Stehzeiten.</div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder</label><Stepper value={cfg.kids} onChange={v=>set("kids",v)} min={4} max={30}/></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Trainer</label><Stepper value={cfg.coaches} onChange={v=>set("coaches",v)} min={1} max={6}/></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Minuten</label><Stepper value={cfg.duration} onChange={v=>set("duration",v)} min={20} max={120}/></div>
+      <Inp label="Kinder heute" type="number" value={cfg.kids} onChange={e=>set("kids",Number(e.target.value))} min={4} style={{marginBottom:0}}/>
+      <Inp label="Trainer" type="number" value={cfg.coaches} onChange={e=>set("coaches",Number(e.target.value))} min={1} style={{marginBottom:0}}/>
+      <Inp label="Minuten" type="number" value={cfg.duration} onChange={e=>set("duration",Number(e.target.value))} min={20} style={{marginBottom:0}}/>
     </div>
-    <div style={{marginBottom:14}}>
-      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Ort</label>
-      <div style={{display:"flex",gap:8}}>
-        {[["outdoor","☀️ Outdoor"],["indoor","🏠 Indoor (Halle)"]].map(([k,l])=><button key={k} onClick={()=>set("location",k)} style={{flex:1,padding:"8px",borderRadius:8,border:`2px solid ${cfg.location===k?C.primary:C.border}`,background:cfg.location===k?C.accentL:"white",color:cfg.location===k?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>{l}</button>)}
-      </div>
-    </div>
-    <div style={{marginBottom:14}}>
-      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Verfügbares Material <span style={{fontSize:11,fontWeight:400,textTransform:"none"}}>– abwählen was fehlt</span></label>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-        {MAT_OPTS.map(m=>{const on=cfg.material.includes(m);return<button key={m} onClick={()=>togMat(m)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${on?C.primary:C.border}`,background:on?C.accentL:"white",color:on?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>📦 {m}</button>;})}
-      </div>
-    </div>
-    <div style={{marginBottom:14}}>
-      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Schwerpunkt (optional)</label>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
-        {["Dribbeln","Passspiel","Torschuss","Koordination","Zweikampf","Spaß & Spiel","Schnelligkeit","Teamwork","Raumgefühl","Funino"].map(s=>{const active=cfg.focus===s;return<button key={s} onClick={()=>set("focus",active?"":s)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${active?C.primary:C.border}`,background:active?C.accentL:"white",color:active?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>{s}</button>;})}
-      </div>
-      <input value={cfg.focus} onChange={e=>set("focus",e.target.value)} placeholder="Oder eigenen Schwerpunkt eingeben..." style={{width:"100%",padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit",color:C.text}}/>
-    </div>
+    <Inp label="Schwerpunkt (optional)" value={cfg.focus} onChange={e=>set("focus",e.target.value)} placeholder="Dribbeln, Passspiel, Spaß..."/>
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><input type="checkbox" id="ul" checked={cfg.useLib} onChange={e=>set("useLib",e.target.checked)} style={{width:16,height:16}}/><label htmlFor="ul" style={{fontSize:14,color:C.text,cursor:"pointer"}}>Meine Bibliothek berücksichtigen ({exercises.length} Übungen)</label></div>
     {error&&<div style={{color:"#ef4444",fontSize:13,marginBottom:12,fontWeight:600}}>❌ {error}</div>}
     <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={onClose} variant="secondary">Abbrechen</Btn><Btn onClick={generate} variant="ai" disabled={loading}>{loading?<><RefreshCw size={14} style={{animation:"spin 1s linear infinite"}}/> Plane...</>:<><Bot size={14}/> Training planen</>}</Btn></div>
@@ -592,7 +290,7 @@ Antworte NUR mit JSON:
 
 // ── EXERCISE FORM ─────────────────────────────────────────────────
 function ExerciseForm({exercise,onSave,onClose}) {
-  const [form,setForm]=useState({title:"",category:"technik",description:"",setup:"",material:[],minPlayers:4,maxPlayers:12,duration:10,rating:0,done:false,tags:[],imageUrl:"",source:"",notes:"",...exercise});
+  const [form,setForm]=useState({title:"",category:"technik",description:"",setup:"",material:[],minPlayers:4,maxPlayers:12,duration:10,rating:3,tags:[],imageUrl:"",source:"",notes:"",...exercise});
   const [mi,setMi]=useState("");const imgRef=useRef();
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const addMat=m=>{ if(!m.trim())return;if(!form.material.includes(m.trim()))set("material",[...form.material,m.trim()]);setMi(""); };
@@ -600,15 +298,6 @@ function ExerciseForm({exercise,onSave,onClose}) {
   return(<div>
     <Inp label="Titel *" value={form.title} onChange={e=>set("title",e.target.value)} placeholder="Name der Übung"/>
     <Sel label="Kategorie" value={form.category} onChange={e=>set("category",e.target.value)}>{Object.entries(CATS).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}</Sel>
-    <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
-      <div style={{flex:1}}>
-        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Status</label>
-        <div style={{display:"flex",gap:8}}>
-          {[[false,"⏳ Noch nicht gemacht","#f1f5f9",C.muted],[true,"✅ Schon gemacht","#dcfce7","#16a34a"]].map(([v,l,bg,col])=>
-            <button key={String(v)} onClick={()=>set("done",v)} style={{flex:1,padding:"7px 10px",borderRadius:8,border:`2px solid ${form.done===v?col:C.border}`,background:form.done===v?bg:"white",color:form.done===v?col:C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit"}}>{l}</button>)}
-        </div>
-      </div>
-    </div>
     <Txta label="Ablauf / Beschreibung" value={form.description} onChange={e=>set("description",e.target.value)} placeholder="Wie läuft die Übung ab?" rows={4}/>
     <Txta label="Aufbau" value={form.setup} onChange={e=>set("setup",e.target.value)} placeholder="Wie wird das Feld aufgebaut?" rows={3}/>
     <div style={{marginBottom:14}}>
@@ -646,17 +335,7 @@ function ExerciseForm({exercise,onSave,onClose}) {
 // ── EXERCISE DETAIL ───────────────────────────────────────────────
 function ExDetail({exercise:ex,onEdit,onDelete,onClose}) {
   return(<div>
-    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
-      <CatBadge cat={ex.category}/>
-      <span style={{color:C.muted,fontSize:13,marginLeft:"auto"}}>⏱ {ex.duration} Min · 👥 {ex.minPlayers}–{ex.maxPlayers}</span>
-    </div>
-    <div style={{display:"flex",gap:8,marginBottom:16,alignItems:"center",background:"#f8fafc",borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`,flexWrap:"wrap"}}>
-      <button onClick={()=>onEdit({...ex,done:!ex.done})} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${ex.done?"#22c55e":C.border}`,background:ex.done?"#dcfce7":"white",color:ex.done?"#15803d":C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit",flexShrink:0}}>{ex.done?"✅ Gemacht":"⏳ Noch nicht"}</button>
-      <div style={{display:"flex",gap:3,alignItems:"center",marginLeft:4}}>
-        {[1,2,3,4,5].map(n=><button key={n} onClick={()=>onEdit({...ex,rating:ex.rating===n?0:n})} style={{width:30,height:30,borderRadius:6,border:"none",background:"transparent",fontSize:20,cursor:"pointer",color:n<=(ex.rating||0)?"#f59e0b":"#d1d5db",padding:0,lineHeight:1}}>★</button>)}
-        {!(ex.rating>0)&&<span style={{fontSize:11,color:C.muted,marginLeft:2,fontStyle:"italic"}}>Tippen zum Bewerten</span>}
-      </div>
-    </div>
+    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}><CatBadge cat={ex.category}/><Stars value={ex.rating} readonly/><span style={{color:C.muted,fontSize:13,marginLeft:"auto"}}>⏱ {ex.duration} Min · 👥 {ex.minPlayers}–{ex.maxPlayers}</span></div>
     {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:10,marginBottom:16,border:`1px solid ${C.border}`}}/>}
     {ex.setup&&<div style={{marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>📐 Aufbau</div><div style={{fontSize:14,color:C.text,lineHeight:1.6,background:"#f8fafc",borderRadius:8,padding:"12px 14px",border:`1px solid ${C.border}`}}>{ex.setup}</div></div>}
     {ex.description&&<div style={{marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>🎯 Ablauf</div><div style={{fontSize:14,color:C.text,lineHeight:1.6,background:"#f8fafc",borderRadius:8,padding:"12px 14px",border:`1px solid ${C.border}`}}>{ex.description}</div></div>}
@@ -684,13 +363,12 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
   const [modal,setModal]=useState(null);
   const [selMode,setSelMode]=useState(false);
   const [selIds,setSelIds]=useState([]);
-  const [collapsed,setCollapsed]=useState({});
-  const toggleCat=cat=>setCollapsed(c=>({...c,[cat]:!c[cat]}));
   const importRef=useRef();
   const toggleSel=id=>setSelIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   const bulkExport=()=>{
     const sel=exercises.filter(e=>selIds.includes(e.id));
-    dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:sel},`uebungen_auswahl_${todayISO()}.json`,toast);
+    dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:sel},`uebungen_auswahl_${todayISO()}.json`);
+    toast(`${sel.length} Übungen exportiert`);
   };
 
   const handleImportJson=async e=>{
@@ -748,44 +426,22 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
         <button key={k} onClick={()=>setFCat(k)} style={{padding:"5px 14px",borderRadius:20,border:`1.5px solid ${fCat===k?(k?CATS[k].color:C.primary):C.border}`,background:fCat===k?(k?CATS[k].bg:C.accentL):"white",color:fCat===k?(k?CATS[k].color:C.primary):C.muted,cursor:"pointer",fontSize:13,fontWeight:700,whiteSpace:"nowrap",fontFamily:"inherit"}}>{l} ({n})</button>
       ))}
     </div>
-    {exercises.length===0?<Empty icon="📚" title="Noch keine Übungen" sub="Lege deine erste Übung an oder nutze KI-Import." onAdd={()=>setModal({type:"form",ex:null})} addLabel="Erste Übung erstellen"/>
-    :filtered.length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.muted,fontSize:14}}>Keine Übungen für diese Suche / diesen Filter.</div>
-    :<div style={{display:"flex",flexDirection:"column",gap:16}}>
-      {Object.entries(CATS).map(([cat,catInfo])=>{
-        const catExs=filtered.filter(e=>e.category===cat);
-        if(!catExs.length)return null;
-        const isOpen=collapsed[cat]!==true;
-        return(<div key={cat}>
-          <button onClick={()=>toggleCat(cat)} style={{display:"flex",alignItems:"center",gap:10,width:"100%",padding:"10px 14px",borderRadius:10,border:`1.5px solid ${catInfo.color}44`,background:catInfo.bg,cursor:"pointer",fontFamily:"inherit",marginBottom:isOpen?10:0}}>
-            <span style={{fontSize:16}}>{catInfo.emoji}</span>
-            <span style={{fontWeight:800,fontSize:15,color:catInfo.color,flex:1,textAlign:"left"}}>{catInfo.label}</span>
-            <span style={{fontSize:12,fontWeight:700,color:catInfo.color,padding:"2px 8px",borderRadius:20,background:catInfo.color+"22"}}>{catExs.length}</span>
-            <span style={{fontSize:12,color:catInfo.color,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
-          </button>
-          {isOpen&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:12}}>
-            {catExs.map(ex=>{
-              const isSel=selIds.includes(ex.id);
-              return(<div key={ex.id} onClick={()=>selMode?toggleSel(ex.id):setModal({type:"detail",ex})}
-                style={{background:C.card,borderRadius:12,border:`2px solid ${selMode&&isSel?C.primary:C.border}`,padding:"14px 16px",cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"box-shadow .15s",position:"relative",opacity:selMode&&!isSel?.7:1}}
-                onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-                {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
-                {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",height:100,objectFit:"cover",borderRadius:8}}/>}
-                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
-                <CatBadge cat={ex.category} small/>
-                <div style={{display:"flex",alignItems:"center",gap:4}}>
-                  {ex.done&&<span style={{fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:10,background:"#dcfce7",color:"#16a34a"}}>✅</span>}
-                  <Stars value={ex.rating} readonly/>
-                </div>
-              </div>
-                <div style={{fontWeight:800,fontSize:15,color:C.text}}>{ex.title}</div>
-                <div style={{display:"flex",gap:10,color:C.muted,fontSize:12,fontWeight:600,flexWrap:"wrap"}}><span>⏱ {ex.duration} Min</span><span>👥 {ex.minPlayers}–{ex.maxPlayers}</span>{ex.material?.length>0&&<span>📦 {ex.material.length}x</span>}</div>
-                {ex.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.tags.slice(0,3).map(t=><span key={t} style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}{ex.tags.length>3&&<span style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11}}>+{ex.tags.length-3}</span>}</div>}
-              </div>);
-            })}
-          </div>}
-        </div>);
-      })}
-    </div>}
+    {filtered.length===0?<Empty icon="📚" title={exercises.length===0?"Noch keine Übungen":"Nichts gefunden"} sub={exercises.length===0?"Lege deine erste Übung an oder nutze KI-Import.":"Andere Suchbegriffe versuchen."} onAdd={exercises.length===0?()=>setModal({type:"form",ex:null}):undefined} addLabel="Erste Übung erstellen"/>
+      :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:12}}>
+        {filtered.map(ex=>{
+          const isSel=selIds.includes(ex.id);
+          return(<div key={ex.id} onClick={()=>selMode?toggleSel(ex.id):setModal({type:"detail",ex})}
+            style={{background:C.card,borderRadius:12,border:`2px solid ${selMode&&isSel?C.primary:C.border}`,padding:"14px 16px",cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"box-shadow .15s",position:"relative",opacity:selMode&&!isSel?.7:1}}
+            onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+            {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
+            {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",height:100,objectFit:"cover",borderRadius:8}}/>}
+            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}><CatBadge cat={ex.category} small/><Stars value={ex.rating} readonly/></div>
+            <div style={{fontWeight:800,fontSize:15,color:C.text}}>{ex.title}</div>
+            <div style={{display:"flex",gap:10,color:C.muted,fontSize:12,fontWeight:600,flexWrap:"wrap"}}><span>⏱ {ex.duration} Min</span><span>👥 {ex.minPlayers}–{ex.maxPlayers}</span>{ex.material?.length>0&&<span>📦 {ex.material.length}x</span>}</div>
+            {ex.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.tags.slice(0,3).map(t=><span key={t} style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}{ex.tags.length>3&&<span style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11}}>+{ex.tags.length-3}</span>}</div>}
+          </div>);
+        })}
+      </div>}
     {modal?.type==="ai"&&<Modal title="🤖 KI-Import" onClose={()=>setModal(null)} wide><AIImportModal apiKey={apiKey} onSave={ex=>{onSave(ex);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="form"&&<Modal title={modal.ex?"Übung bearbeiten":"Neue Übung"} onClose={()=>setModal(null)} wide><ExerciseForm exercise={modal.ex} onSave={(ex,andAdd)=>{onSave(ex);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="detail"&&<Modal title={modal.ex.title} onClose={()=>setModal(null)} wide><ExDetail exercise={modal.ex} onEdit={()=>setModal({type:"form",ex:modal.ex})} onDelete={onDelete} onClose={()=>setModal(null)}/></Modal>}
@@ -1012,16 +668,12 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
 
 // ── TEAM BUILDER ──────────────────────────────────────────────────
 function TeamBuilderModal({availablePlayers,onSaveTeams,onClose}) {
-  const activeDef=availablePlayers.filter(p=>p.active);
-  const defTeams=Math.max(2,Math.round(activeDef.length/3));
-  const [numTeams,setNumTeams]=useState(defTeams);
+  const [perTeam,setPerTeam]=useState(3);
   const [mode,setMode]=useState("balanced");
-  const [skillDist,setSkillDist]=useState({strong:0,weak:0});
   const [teams,setTeams]=useState([]);
-  const [selIds,setSelIds]=useState(activeDef.map(p=>p.id));
+  const [selIds,setSelIds]=useState(availablePlayers.filter(p=>p.active).map(p=>p.id));
   const sel=availablePlayers.filter(p=>selIds.includes(p.id));
-  const perTeam=sel.length?Math.round(sel.length/numTeams):3;
-  const generate=()=>setTeams(buildTeams(sel,numTeams,mode,skillDist));
+  const generate=()=>setTeams(buildTeams(sel,perTeam,mode));
   const mb=(k,l,d)=><button onClick={()=>setMode(k)} style={{flex:1,minWidth:110,padding:"8px 10px",borderRadius:8,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><div style={{fontWeight:700,fontSize:13,color:mode===k?C.primary:C.text}}>{l}</div><div style={{fontSize:11,color:C.muted}}>{d}</div></button>;
   return(<div>
     <div style={{marginBottom:16}}>
@@ -1030,33 +682,10 @@ function TeamBuilderModal({availablePlayers,onSaveTeams,onClose}) {
         {availablePlayers.map(p=><button key={p.id} onClick={()=>setSelIds(prev=>prev.includes(p.id)?prev.filter(x=>x!==p.id):[...prev,p.id])} style={{padding:"4px 12px",borderRadius:20,border:`2px solid ${selIds.includes(p.id)?STR[p.strength].color:C.border}`,background:selIds.includes(p.id)?STR[p.strength].light:"white",color:selIds.includes(p.id)?STR[p.strength].color:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{STR[p.strength].emoji} {p.name}</button>)}
       </div>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-      <div>
-        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Anzahl Teams</label>
-        <Stepper value={numTeams} onChange={setNumTeams} min={2} max={12}/>
-        <div style={{fontSize:11,color:C.muted,marginTop:4}}>≈ {perTeam} Spieler/Team</div>
-      </div>
-      <div>
-        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label>
-        <div style={{display:"flex",flexDirection:"column",gap:5}}>
-          {[["balanced","⚖️ Ausgeglichen","Stärken gleichmäßig verteilt"],["skill","📊 Stärke-Gruppen","Ich bestimme wie viele stark/schwach"],["mixed","🎨 Durchmischt","Alle Level in jedem Team"],["challenge","⚡ Herausforderung","Stark vs. Schwach"],["random","🎲 Zufällig","Komplett zufällig"]].map(([k,l,d])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 10px",borderRadius:7,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",gap:8,alignItems:"center"}}><div style={{flex:1}}><span style={{fontWeight:700,fontSize:12,color:mode===k?C.primary:C.text}}>{l}</span><span style={{fontSize:11,color:C.muted,marginLeft:4}}>{d}</span></div></button>)}
-        </div>
-      </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:12,marginBottom:14}}>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Spieler/Team</label><input type="number" value={perTeam} onChange={e=>setPerTeam(Number(e.target.value))} min={2} max={8} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",boxSizing:"border-box"}}/><div style={{fontSize:11,color:C.muted,marginTop:4}}>→ {Math.floor(sel.length/perTeam)} Teams</div></div>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label><div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{mb("balanced","⚖️ Ausgeglichen","Stärken gleichmäßig")}{mb("mixed","🎨 Durchmischt","Alle Level je Team")}{mb("challenge","⚡ Herausforderung","Stark vs. Schwach")}{mb("random","🎲 Zufällig","Komplett zufällig")}</div></div>
     </div>
-    {mode==="skill"&&<div style={{background:"#f0f9ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #bae6fd"}}>
-      <div style={{fontSize:12,fontWeight:700,color:"#0369a1",marginBottom:10}}>📊 Stärke-Verteilung ({numTeams} Teams gesamt)</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-        {[["strong","💪 Starke Teams","#dc2626","#fee2e2"],["mid","➖ Gemischte Teams","#d97706","#fef3c7"],["weak","🌱 Schwache Teams","#16a34a","#dcfce7"]].map(([k,l,col,bg])=>{
-          const val=k==="mid"?numTeams-skillDist.strong-skillDist.weak:skillDist[k]||0;
-          const setVal=v=>{if(k==="mid")return;const other=k==="strong"?"weak":"strong";const max=numTeams-(skillDist[other]||0);setSkillDist(d=>({...d,[k]:Math.min(Math.max(0,v),max)}));};
-          return(<div key={k} style={{textAlign:"center",padding:"8px",borderRadius:8,background:bg,border:`1.5px solid ${col}33`}}>
-            <div style={{fontSize:11,fontWeight:700,color:col,marginBottom:6}}>{l}</div>
-            {k==="mid"?<div style={{fontWeight:900,fontSize:22,color:col}}>{val}</div>:<Stepper value={val} onChange={setVal} min={0} max={numTeams-1}/>}
-          </div>);
-        })}
-      </div>
-      <div style={{fontSize:11,color:C.muted,marginTop:8}}>Starke Teams spielen gegen starke, schwache gegen schwache → fairer Spaß für alle</div>
-    </div>}
     <Btn onClick={generate} style={{width:"100%",justifyContent:"center",marginBottom:16}}><Shuffle size={16}/> Teams generieren</Btn>
     {teams.length>0&&(<><Divider/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:10}}>
@@ -1141,7 +770,7 @@ function SessionForm({session,players,coaches,exercises,onSave,onClose}) {
         <div style={{fontSize:12,color:"#92400e"}}>Oder spezifische<br/>Spieler unten wählen</div>
       </div>
     </div>
-    {ms(coaches.filter(c=>c.active!==false),form.coachIds,id=>tog("coachIds",id),"Trainer",c=>c.name)}
+    {ms(coaches.filter(c=>c.active),form.coachIds,id=>tog("coachIds",id),"Trainer",c=>`${ROLES[c.role][0]}. ${c.name}`)}
     <div style={{marginBottom:14}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
         <label style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Spieler ({form.playerIds.length}) <span style={{fontWeight:400,textTransform:"none",letterSpacing:0}}>– optional</span></label>
@@ -1170,11 +799,11 @@ const BLOCKS = [
   {key:"abschluss",   label:"Abschluss",         emoji:"🌅", cat:"abschluss",                 defaultMin:5},
 ];
 
-function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,toast,setup}) {
+function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,toast}) {
   const activeCount=players.filter(p=>p.active).length;
-  const [kids,setKids]=useState(setup?.kids||activeCount||10);
-  const [coaches,setCoaches]=useState(setup?.coachCount||1);
-  const [totalMin,setTotalMin]=useState(setup?.duration||60);
+  const [kids,setKids]=useState(activeCount||10);
+  const [coaches,setCoaches]=useState(1);
+  const [totalMin,setTotalMin]=useState(60);
   const [blocks,setBlocks]=useState(BLOCKS.map(b=>({...b,active:b.key!=="mittel2",parallel:false,stations:2,pick:"random",exerciseId:null,minutes:b.defaultMin})));
   const [plan,setPlan]=useState(null);
 
@@ -1272,9 +901,9 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder</label><Stepper value={kids} onChange={setKids} min={4} max={30}/></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Trainer</label><Stepper value={coaches} onChange={setCoaches} min={1} max={6}/></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Gesamt (Min)</label><Stepper value={totalMin} onChange={setTotalMin} min={20} max={120}/></div>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>KINDER</label><input type="number" value={kids} onChange={e=>setKids(Number(e.target.value))} min={4} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",boxSizing:"border-box"}}/></div>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>TRAINER</label><input type="number" value={coaches} onChange={e=>setCoaches(Number(e.target.value))} min={1} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",boxSizing:"border-box"}}/></div>
+      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:4}}>GESAMT (MIN)</label><input type="number" value={totalMin} onChange={e=>setTotalMin(Number(e.target.value))} min={20} style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",boxSizing:"border-box"}}/></div>
     </div>
 
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
@@ -1282,14 +911,11 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:b.active?C.accentL:"#f8fafc",cursor:"pointer"}} onClick={()=>setBlock(b.key,"active",!b.active)}>
           <div style={{color:b.active?C.primary:C.muted}}>{b.active?<CheckSquare size={18}/>:<Square size={18}/>}</div>
           <span style={{fontSize:15,fontWeight:700,color:b.active?C.primary:C.text,flex:1}}>{b.emoji} {b.label}</span>
-          <div onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:4}}>
-            <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:6,overflow:"hidden",height:30}}>
-              <button onClick={()=>setBlock(b.key,"minutes",Math.max(3,b.minutes-1))} style={{width:24,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:13,color:C.muted}}>−</button>
-              <div style={{width:36,textAlign:"center",fontWeight:800,fontSize:13,color:C.text}}>{b.minutes}</div>
-              <button onClick={()=>setBlock(b.key,"minutes",Math.min(60,b.minutes+1))} style={{width:24,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:13,color:C.text}}>+</button>
-            </div>
-            <span style={{fontSize:12,color:C.muted}}>Min</span>
-          </div>
+          <input type="number" value={b.minutes} min={3} max={60}
+            onClick={e=>e.stopPropagation()}
+            onChange={e=>setBlock(b.key,"minutes",Number(e.target.value))}
+            style={{width:60,padding:"4px 8px",border:`1.5px solid ${C.border}`,borderRadius:6,fontSize:13,fontWeight:700,textAlign:"center",outline:"none"}}
+          /> <span style={{fontSize:12,color:C.muted}}>Min</span>
         </div>
         {b.active&&<div style={{padding:"10px 14px",display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",borderTop:`1px solid ${C.border}`}}>
           <div style={{display:"flex",gap:6}}>
@@ -1305,11 +931,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
             <input type="checkbox" id={`par${b.key}`} checked={b.parallel} onChange={e=>setBlock(b.key,"parallel",e.target.checked)} style={{width:15,height:15}}/>
             <label htmlFor={`par${b.key}`} style={{fontSize:12,fontWeight:700,color:C.muted,cursor:"pointer"}}>Parallel</label>
             {b.parallel&&<><span style={{fontSize:12,color:C.muted}}>Stationen:</span>
-            <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:6,overflow:"hidden",height:28}}>
-              <button onClick={()=>setBlock(b.key,"stations",Math.max(2,b.stations-1))} style={{width:22,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:12,color:C.muted}}>−</button>
-              <div style={{width:28,textAlign:"center",fontWeight:800,fontSize:13,color:C.text}}>{b.stations}</div>
-              <button onClick={()=>setBlock(b.key,"stations",Math.min(6,b.stations+1))} style={{width:22,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:12,color:C.text}}>+</button>
-            </div></>}
+            <input type="number" value={b.stations} min={2} max={6} onChange={e=>setBlock(b.key,"stations",Number(e.target.value))} style={{width:44,padding:"4px 6px",border:`1.5px solid ${C.border}`,borderRadius:6,fontSize:13,fontWeight:700,textAlign:"center",outline:"none"}}/></>}
           </div>
         </div>}
       </div>)}
@@ -1327,92 +949,8 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     </div>
   </div>);
 }
-function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,onSaveSession}) {
-  const gP=id=>players.find(p=>p.id===id);
-  const gC=id=>coaches.find(c=>c.id===id);
-  const gE=id=>exercises.find(e=>e.id===id);
-  const pr=(s.playerIds||[]).map(gP).filter(Boolean);
-  const tr=(s.coachIds||[]).map(gC).filter(Boolean);
-  const ex=(s.exerciseIds||[]).map(gE).filter(Boolean);
-  const kids=s.participantCount?Number(s.participantCount):pr.length;
-  const [selEx,setSelEx]=useState(null);
-  return(<div>
-    {/* Header meta */}
-    <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
-      {s.isDraft&&<span style={{fontSize:12,fontWeight:700,padding:"2px 10px",borderRadius:20,background:"#fef9c3",color:"#854d0e",border:"1px solid #fde047"}}>📋 Entwurf</span>}
-      <span style={{fontSize:13,color:C.muted,marginLeft:"auto"}}>{fmtDate(s.date)}</span>
-    </div>
-    {/* Quick stats */}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:16}}>
-      {[["⏱",`${s.duration} Min`,"Dauer"],["👥",`${kids}`,"Kinder"],["🧑‍🏫",`${tr.length||"–"}`,"Trainer"]].map(([icon,val,lbl])=>(
-        <div key={lbl} style={{textAlign:"center",padding:"10px 8px",background:"#f8fafc",borderRadius:10,border:`1px solid ${C.border}`}}>
-          <div style={{fontSize:18,marginBottom:2}}>{icon}</div>
-          <div style={{fontWeight:900,fontSize:18,color:C.text,lineHeight:1}}>{val}</div>
-          <div style={{fontSize:11,color:C.muted,marginTop:2}}>{lbl}</div>
-        </div>
-      ))}
-    </div>
-    {/* Location + weather */}
-    {(s.location||s.weather)&&<div style={{display:"flex",gap:10,marginBottom:14,fontSize:13,color:C.muted}}>
-      {s.location&&<span>📍 {s.location}</span>}
-      {s.weather&&<span>🌤 {s.weather}</span>}
-    </div>}
-    {/* Trainer */}
-    {tr.length>0&&<div style={{marginBottom:14}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Trainer</div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{tr.map(c=><span key={c.id} style={{fontSize:13,padding:"3px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:700}}>🧑‍🏫 {c.name}</span>)}</div>
-    </div>}
-    {/* Players */}
-    {pr.length>0&&<div style={{marginBottom:14}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Anwesend ({pr.length})</div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:4}}>{pr.map(p=><span key={p.id} style={{fontSize:12,padding:"3px 10px",borderRadius:20,background:STR[p.strength]?.light||"#f1f5f9",color:STR[p.strength]?.color||C.muted,fontWeight:600}}>{STR[p.strength]?.emoji} {p.name}</span>)}</div>
-    </div>}
-    {/* Exercises */}
-    {ex.length>0&&<div style={{marginBottom:14}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Übungen ({ex.length})</div>
-      {selEx?(<div style={{background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",marginBottom:8}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:"white"}}>
-          <CatBadge cat={selEx.category} small/>
-          <span style={{fontWeight:800,fontSize:14,color:C.text,flex:1}}>{selEx.title}</span>
-          <button onClick={()=>setSelEx(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:18,lineHeight:1}}>✕</button>
-        </div>
-        <div style={{padding:"12px 14px"}}>
-          {selEx.setup&&<div style={{marginBottom:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:4}}>📐 Aufbau</div><div style={{fontSize:13,lineHeight:1.6,color:C.text}}>{selEx.setup}</div></div>}
-          {selEx.description&&<div style={{marginBottom:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:4}}>🎯 Ablauf</div><div style={{fontSize:13,lineHeight:1.6,color:C.text}}>{selEx.description}</div></div>}
-          {selEx.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{selEx.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}</div>}
-        </div>
-      </div>):(
-        <div style={{display:"flex",flexDirection:"column",gap:4}}>
-          {ex.map(e=><button key={e.id} onClick={()=>setSelEx(e)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:"white",border:`1px solid ${C.border}`,cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-            <span style={{fontSize:16}}>{CATS[e.category]?.emoji||"📋"}</span>
-            <span style={{fontWeight:700,fontSize:13,color:C.text,flex:1}}>{e.title}</span>
-            <span style={{fontSize:11,color:C.muted}}>⏱ {e.duration} Min →</span>
-          </button>)}
-        </div>
-      )}
-    </div>}
-    {/* Teams */}
-    {s.teams?.length>0&&<div style={{marginBottom:14}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Teams ({s.teams.length})</div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{s.teams.map(tm=><div key={tm.id} style={{padding:"8px 12px",borderRadius:8,background:C.accentL,border:`1px solid ${C.accent}`,minWidth:100}}>
-        <div style={{fontSize:12,fontWeight:800,color:C.primary,marginBottom:4}}>{tm.name}</div>
-        <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>{tm.players?.map(p=>p.name).join(", ")||"–"}</div>
-      </div>)}</div>
-    </div>}
-    {/* Notes */}
-    {s.notes&&<div style={{marginBottom:14,padding:"10px 14px",background:"#fffbeb",borderRadius:8,border:"1px solid #fde68a",fontSize:13,color:C.text,lineHeight:1.6}}>💬 {s.notes}</div>}
-    {/* Actions */}
-    <div style={{display:"flex",gap:8,justifyContent:"flex-end",paddingTop:14,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
-      <Btn sm variant="danger" onClick={()=>{if(confirm("Training löschen?"))onDelete();}}><Trash2 size={13}/> Löschen</Btn>
-      <Btn sm variant="secondary" onClick={onEdit}><Edit2 size={13}/> Bearbeiten</Btn>
-      <Btn sm onClick={onClose}>Schließen</Btn>
-    </div>
-  </div>);
-}
-
-
 // ── TRAINING PAGE ─────────────────────────────────────────────────
-function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise}) {
+function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast}) {
   const [tab,setTab]=useState("history");
   const [modal,setModal]=useState(null);
   const sorted=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -1423,126 +961,44 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
       <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Training</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{sessions.length} Einheiten</div></div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <Btn onClick={()=>setModal({type:"notfall"})} style={{background:"#dc2626",color:"white"}} sm><AlertTriangle size={14}/> SOS</Btn>
-        <Btn onClick={()=>setModal({type:"session",data:null})} variant="secondary" sm><Plus size={14}/> Eintragen</Btn>
-        <Btn onClick={()=>setModal({type:"setup"})}><CalendarDays size={16}/> Training planen</Btn>
+        <Btn onClick={()=>setModal({type:"manual"})} variant="secondary" sm><ListChecks size={14}/> Manuell planen</Btn>
+        <Btn onClick={()=>setModal({type:"ai"})} variant="ai" sm><Bot size={14}/> KI-Plan</Btn>
+        <Btn onClick={()=>setModal({type:"session",data:null})}><Plus size={16}/> Protokoll</Btn>
       </div>
     </div>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content"}}>{tb("history","Verlauf")}{tb("teams","Teambildung")}</div>
     {tab==="history"&&(sorted.length===0?<Empty icon="📅" title="Noch kein Training" onAdd={()=>setModal({type:"session",data:null})} addLabel="Training planen"/>:
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {sorted.map(s=>{
-          const pr=(s.playerIds||[]).map(gP).filter(Boolean),tr=(s.coachIds||[]).map(gC).filter(Boolean),ex=(s.exerciseIds||[]).map(gE).filter(Boolean);
-          const kids=s.participantCount?Number(s.participantCount):pr.length;
-          return(<div key={s.id} onClick={()=>setModal({type:"sessionDetail",data:s})} style={{background:C.card,borderRadius:12,border:`1.5px solid ${s.isDraft?"#fde047":C.border}`,padding:"14px 16px",cursor:"pointer",transition:"box-shadow .15s"}} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 16px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-            <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
-                  <span style={{fontWeight:800,fontSize:15,color:C.text}}>{fmtDate(s.date)}</span>
-                  {s.isDraft&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:20,background:"#fef9c3",color:"#854d0e",border:"1px solid #fde047"}}>📋 Entwurf</span>}
-                </div>
-                <div style={{display:"flex",gap:10,color:C.muted,fontSize:13,flexWrap:"wrap"}}>
-                  <span>⏱ {s.duration} Min</span>
-                  {kids>0&&<span>👥 {kids} Kinder</span>}
-                  {tr.length>0&&<span>🧑‍🏫 {tr.map(c=>c.name).join(", ")}</span>}
-                  {s.location&&<span>📍 {s.location}</span>}
-                  {ex.length>0&&<span>{ex.slice(0,2).map(e=>CATS[e.category]?.emoji||"").join("")} {ex.length} Übung{ex.length!==1?"en":""}</span>}
-                </div>
-              </div>
-              <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
-                <button title="Teams bilden" onClick={()=>setModal({type:"tb",data:{session:s,players:pr.length?pr:players.filter(p=>p.active)}})} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}><Shuffle size={13}/></button>
-                <button title="Bearbeiten" onClick={()=>setModal({type:"session",data:s})} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}><Edit2 size={13}/></button>
-                <button title="Löschen" onClick={()=>{if(confirm("Training löschen?"))onDeleteSession(s.id);}} style={{padding:"5px 8px",borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={13}/></button>
-              </div>
-            </div>
-          </div>);
-        })}
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {sorted.map(s=>{const pr=(s.playerIds||[]).map(gP).filter(Boolean),tr=(s.coachIds||[]).map(gC).filter(Boolean),ex=(s.exerciseIds||[]).map(gE).filter(Boolean);return(<div key={s.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:"16px 20px"}}>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+            <div><div style={{fontWeight:800,fontSize:16,color:C.text}}>{fmtDate(s.date)}</div><div style={{display:"flex",gap:12,color:C.muted,fontSize:13,marginTop:4,flexWrap:"wrap"}}><span>⏱ {s.duration} Min</span>{s.location&&<span>📍 {s.location}</span>}{s.weather&&<span>🌤 {s.weather}</span>}<span>👥 {s.participantCount?s.participantCount+" Kinder":pr.length+" Kinder"}</span>{tr.length>0&&<span>🧑‍🏫 {tr.map(c=>c.name).join(", ")}</span>}</div></div>
+            <div style={{display:"flex",gap:6}}><Btn sm variant="secondary" onClick={()=>setModal({type:"tb",data:{session:s,players:pr.length?pr:players.filter(p=>p.active)}})}><Shuffle size={13}/> Teams</Btn><Btn sm variant="secondary" onClick={()=>setModal({type:"session",data:s})}><Edit2 size={13}/></Btn><Btn sm variant="danger" onClick={()=>onDeleteSession(s.id)}><Trash2 size={13}/></Btn></div>
+          </div>
+          {pr.length>0&&<div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:5}}>Anwesend</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{pr.map(p=><span key={p.id} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:STR[p.strength].light,color:STR[p.strength].color,fontWeight:600}}>{STR[p.strength].emoji} {p.name}</span>)}</div></div>}
+          {ex.length>0&&<div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:5}}>Übungen</div><div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.map(e=><span key={e.id} style={{fontSize:12,padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontWeight:600}}>{CATS[e.category]?.emoji} {e.title}</span>)}</div></div>}
+          {s.teams?.length>0&&<div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",marginBottom:5}}>Teams</div><div style={{display:"flex",gap:10,flexWrap:"wrap"}}>{s.teams.map(t=><div key={t.id} style={{padding:"6px 12px",borderRadius:8,background:C.accentL,border:`1px solid ${C.accent}`}}><div style={{fontSize:12,fontWeight:700,color:C.primary}}>{t.name}</div><div style={{fontSize:11,color:C.muted}}>{t.players.map(p=>p.name).join(", ")}</div></div>)}</div></div>}
+          {s.notes&&<div style={{marginTop:10,fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {s.notes}</div>}
+        </div>);})}
       </div>)}
     {tab==="teams"&&<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:20}}><h2 style={{margin:"0 0 6px",fontSize:18,fontWeight:800}}>Schnelle Teambildung</h2><p style={{margin:"0 0 16px",color:C.muted,fontSize:14}}>Teams bilden ohne Training zu protokollieren.</p><Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={16}/> Teams zusammenstellen</Btn></div>}
     {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="setup"&&<Modal title="Training planen" onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} onClose={()=>setModal(null)} onPlanManual={setup=>setModal({type:"manual",setup})} onPlanKI={setup=>setModal({type:"ai",setup})}/></Modal>}
-    {modal?.type==="manual"&&<Modal title="📋 Manuell planen" onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} setup={modal.setup} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
-    {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
+    {modal?.type==="manual"&&<Modal title="📋 Training manuell planen" onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
+    {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={teams=>{if(modal.data.session)onSaveSession({...modal.data.session,teams});setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession}/></Modal>}
-    {modal?.type==="exDetail"&&modal.data&&<Modal title="Übungsdetail" onClose={()=>setModal(null)}><div><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}><CatBadge cat={modal.data.category}/><Stars value={modal.data.rating} readonly/><span style={{fontSize:13,color:C.muted,marginLeft:"auto"}}>⏱ {modal.data.duration} Min</span></div>{modal.data.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.setup}</div></div>}{modal.data.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.description}</div></div>}{modal.data.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{modal.data.material.map(m=><span key={m} style={{padding:"3px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div>}{modal.data.notes&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {modal.data.notes}</div>}</div></Modal>}
   </div>);
 }
-
-// ── TRAINING SETUP MODAL ─────────────────────────────────────────
-function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose}) {
-  const activeP=players.filter(p=>p.active);
-  const [setup,setSetup]=useState({kids:activeP.length||10,coachCount:1,duration:60,location:"outdoor",date:todayISO(),playerIds:[],coachIds:[],focus:""});
-  const [showPlayers,setShowPlayers]=useState(false);
-  const [showCoaches,setShowCoaches]=useState(false);
-  const s=(k,v)=>setSetup(x=>({...x,[k]:v}));
-  const togP=id=>s("playerIds",setup.playerIds.includes(id)?setup.playerIds.filter(x=>x!==id):[...setup.playerIds,id]);
-  const togC=id=>s("coachIds",setup.coachIds.includes(id)?setup.coachIds.filter(x=>x!==id):[...setup.coachIds,id]);
-  return(<div>
-    <div style={{background:"#f0fdf4",borderRadius:10,padding:"10px 14px",marginBottom:16,border:"1px solid #bbf7d0",fontSize:13,color:"#15803d"}}>Gib die Eckdaten ein – dann wähle Manuell oder KI-Plan.</div>
-    <div style={{marginBottom:14}}>
-      <Inp label="Datum" type="date" value={setup.date} onChange={e=>s("date",e.target.value)}/>
-      <div>
-        <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Ort</label>
-        <div style={{display:"flex",gap:8}}>
-          {[["outdoor","☀️ Outdoor"],["indoor","🏠 Halle"]].map(([k,l])=><button key={k} onClick={()=>s("location",k)} style={{flex:1,padding:"9px 8px",borderRadius:8,border:`2px solid ${setup.location===k?C.primary:C.border}`,background:setup.location===k?C.accentL:"white",color:setup.location===k?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit"}}>{l}</button>)}
-        </div>
-      </div>
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:14}}>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder</label><Stepper value={setup.kids} onChange={v=>s("kids",v)} min={2} max={30}/></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Trainer</label><Stepper value={setup.coachCount} onChange={v=>s("coachCount",v)} min={1} max={6}/></div>
-      <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Minuten</label><Stepper value={setup.duration} onChange={v=>s("duration",v)} min={20} max={120}/></div>
-    </div>
-    {activeP.length>0&&<div style={{marginBottom:12}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        <label style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Spieler <span style={{fontWeight:400,textTransform:"none"}}>(optional – {setup.playerIds.length} ausgewählt)</span></label>
-        <Btn sm variant="secondary" onClick={()=>setShowPlayers(v=>!v)}>{showPlayers?"▲ Einklappen":"▼ Auswählen"}</Btn>
-      </div>
-      {showPlayers&&<div style={{display:"flex",flexWrap:"wrap",gap:6,padding:10,background:"#f8fafc",borderRadius:8,border:`1.5px solid ${C.border}`,maxHeight:120,overflowY:"auto"}}>
-        {activeP.map(p=><button key={p.id} onClick={()=>togP(p.id)} style={{padding:"4px 10px",borderRadius:20,border:`1.5px solid ${setup.playerIds.includes(p.id)?STR[p.strength].color:C.border}`,background:setup.playerIds.includes(p.id)?STR[p.strength].light:"white",color:setup.playerIds.includes(p.id)?STR[p.strength].color:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>{STR[p.strength].emoji} {p.name}</button>)}
-      </div>}
-    </div>}
-    {coaches.length>0&&<div style={{marginBottom:14}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        <label style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Trainer <span style={{fontWeight:400,textTransform:"none"}}>(optional – {setup.coachIds.length} ausgewählt)</span></label>
-        <Btn sm variant="secondary" onClick={()=>setShowCoaches(v=>!v)}>{showCoaches?"▲ Einklappen":"▼ Auswählen"}</Btn>
-      </div>
-      {showCoaches&&<div style={{display:"flex",flexWrap:"wrap",gap:6,padding:10,background:"#f8fafc",borderRadius:8,border:`1.5px solid ${C.border}`}}>
-        {coaches.filter(c=>c.active!==false).map(c=><button key={c.id} onClick={()=>togC(c.id)} style={{padding:"4px 10px",borderRadius:20,border:`1.5px solid ${setup.coachIds.includes(c.id)?C.primary:C.border}`,background:setup.coachIds.includes(c.id)?C.accentL:"white",color:setup.coachIds.includes(c.id)?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>{c.name}</button>)}
-      </div>}
-    </div>}
-    <div style={{marginBottom:14}}>
-      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Schwerpunkt (optional)</label>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
-        {["Dribbeln","Passspiel","Torschuss","Koordination","Zweikampf","Spaß & Spiel","Schnelligkeit","Teamwork","Funino"].map(f=>{const a=setup.focus===f;return<button key={f} onClick={()=>s("focus",a?"":f)} style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${a?C.primary:C.border}`,background:a?C.accentL:"white",color:a?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>{f}</button>;})}
-      </div>
-    </div>
-    <div style={{borderTop:`1px solid ${C.border}`,paddingTop:16,display:"flex",gap:10,flexWrap:"wrap"}}>
-      <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
-      <div style={{flex:1}}/>
-      <Btn onClick={()=>onPlanManual(setup)} variant="secondary"><ListChecks size={14}/> Manuell planen</Btn>
-      <Btn onClick={()=>onPlanKI(setup)} variant="ai"><Bot size={14}/> KI-Plan</Btn>
-    </div>
-  </div>);
-}
-
 
 // ── TURNIER PAGE ──────────────────────────────────────────────────
 function TournamentForm({onSave,onClose}) {
   const [form,setForm]=useState({name:"",date:todayISO(),matchDuration:8,fields:1,notes:""});
   const [teams,setTeams]=useState([{id:uid(),name:"Team 1",color:TCOLORS[0]},{id:uid(),name:"Team 2",color:TCOLORS[1]}]);
+  const [nt,setNt]=useState("");
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const addTeam=()=>setTeams(t=>[...t,{id:uid(),name:`Team ${t.length+1}`,color:TCOLORS[t.length%TCOLORS.length]}]);
+  const addTeam=()=>{ if(!nt.trim())return;setTeams(t=>[...t,{id:uid(),name:nt.trim(),color:TCOLORS[t.length%TCOLORS.length]}]);setNt(""); };
   return(<div>
     <Inp label="Turniername *" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="z.B. Herbstturnier"/>
-    <div style={{marginBottom:14}}>
-      <Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Spieldauer (Min)</label><Stepper value={form.matchDuration} onChange={v=>set("matchDuration",v)} min={3} max={30}/></div>
-        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Felder</label><Stepper value={form.fields} onChange={v=>set("fields",v)} min={1} max={6}/></div>
-      </div>
-    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}><Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{marginBottom:0}}/><Inp label="Spieldauer (Min)" type="number" value={form.matchDuration} onChange={e=>set("matchDuration",Number(e.target.value))} min={3} style={{marginBottom:0}}/><Inp label="Felder" type="number" value={form.fields} onChange={e=>set("fields",Number(e.target.value))} min={1} style={{marginBottom:0}}/></div>
     <div style={{marginTop:14,marginBottom:14}}>
       <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Teams ({teams.length})</label>
       <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
@@ -1552,7 +1008,7 @@ function TournamentForm({onSave,onClose}) {
           {teams.length>2&&<button onClick={()=>setTeams(ts=>ts.filter(x=>x.id!==t.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:2}}>✕</button>}
         </div>)}
       </div>
-      <Btn sm onClick={addTeam}><Plus size={13}/> Team hinzufügen</Btn>
+      <div style={{display:"flex",gap:8}}><input value={nt} onChange={e=>setNt(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTeam()} placeholder="Team hinzufügen..." style={{flex:1,padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:"inherit"}}/><Btn sm onClick={addTeam}>+ Team</Btn></div>
       <div style={{fontSize:12,color:C.muted,marginTop:6}}>→ {teams.length*(teams.length-1)/2} Spiele (Round Robin)</div>
     </div>
     <Txta label="Notizen" value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2}/>
@@ -1560,197 +1016,35 @@ function TournamentForm({onSave,onClose}) {
   </div>);
 }
 
-function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
+function TournamentDetail({tournament:t,onUpdate,onBack}) {
   const [tab,setTab]=useState("plan");
-  const [sc,setSc]=useState(Object.fromEntries(t.matches.map(m=>[m.id,{h:m.homeScore??0,a:m.awayScore??0}])));
-  const [startTime,setStartTime]=useState("10:00");
-  const [pauseMin,setPauseMin]=useState(2);
+  const [sc,setSc]=useState(Object.fromEntries(t.matches.map(m=>[m.id,{h:m.homeScore??"",a:m.awayScore??""}])));
   const gt=id=>t.teams.find(x=>x.id===id);
-  const fields=t.fields||1;
-  const adjScore=(mId,side,delta)=>setSc(s=>({...s,[mId]:{...s[mId],[side]:Math.max(0,(s[mId]?.[side]||0)+delta)}}));
-  const save=mId=>{ const s=sc[mId],h=Number(s.h),a=Number(s.a);if(isNaN(h)||isNaN(a))return;onUpdate({...t,matches:t.matches.map(m=>m.id===mId?{...m,homeScore:h,awayScore:a,played:true}:m)}); };
+  const save=mId=>{ const s=sc[mId],h=parseInt(s.h),a=parseInt(s.a);if(isNaN(h)||isNaN(a))return;onUpdate({...t,matches:t.matches.map(m=>m.id===mId?{...m,homeScore:h,awayScore:a,played:true}:m)}); };
   const standings=calcStandings(t.teams,t.matches);
   const played=t.matches.filter(m=>m.played).length;
-  const buildSchedule=()=>{
-    const [h,m]=startTime.split(":").map(Number);
-    const startMin=h*60+m;
-    const fieldQ=Array.from({length:fields},()=>[]);
-    t.matches.forEach((m,i)=>fieldQ[i%fields].push(m));
-    const slots=[];
-    fieldQ.forEach((q,fi)=>q.forEach((m,ri)=>{
-      const t0=startMin+ri*(t.matchDuration+pauseMin);
-      slots.push({match:m,field:fi+1,startMin:t0});
-    }));
-    return slots.sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
-  };
-  const fmtTime=m=>{const hh=Math.floor(m/60),mm=m%60;return`${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;};
-  const [expandedField,setExpandedField]=useState(null);
-  const [coachAssign,setCoachAssign]=useState({}); // fieldIdx → coachId
-  const assignCoach=(fi,cid)=>setCoachAssign(a=>({...a,[fi]:cid}));
-  const tb=(k,l)=><button onClick={()=>setTab(k)} style={{padding:"7px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}</button>;
+  const mwf=t.matches.map((m,i)=>({...m,field:(i%t.fields)+1}));
+  const tb=(k,l)=><button onClick={()=>setTab(k)} style={{padding:"7px 18px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}</button>;
   return(<div>
     <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
       <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:14,display:"flex",alignItems:"center",gap:4}}>← Zurück</button>
       <div><h2 style={{margin:0,fontSize:20,fontWeight:900,color:C.text}}>{t.name}</h2><div style={{fontSize:13,color:C.muted}}>{fmtDate(t.date)} · {t.teams.length} Teams · {played}/{t.matches.length} Spiele · {t.matchDuration} Min/Spiel</div></div>
     </div>
-    <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content",flexWrap:"wrap"}}>{tb("plan","Spielplan")}{tb("teams","Teams")}{tb("schedule","Zeitplan")}{tb("uebersicht","Übersicht")}{tb("table","Tabelle")}</div>
+    <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content"}}>{tb("plan","Spielplan")}{tb("table","Tabelle")}</div>
     {tab==="plan"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
-      {t.matches.map((m,i)=>{ const field=(i%fields)+1; const h=gt(m.homeId),a=gt(m.awayId);if(!h||!a)return null;return(<div key={m.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${m.played?"#22c55e":C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <div style={{fontSize:12,color:C.muted,fontWeight:600,minWidth:60}}>#{i+1}{fields>1&&` · F${field}`}</div>
+      {mwf.map((m,i)=>{ const h=gt(m.homeId),a=gt(m.awayId);if(!h||!a)return null;return(<div key={m.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${m.played?"#22c55e":C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <div style={{fontSize:12,color:C.muted,fontWeight:600,minWidth:60}}>#{i+1}{t.fields>1&&` · F${m.field}`}</div>
         <div style={{display:"flex",alignItems:"center",gap:10,flex:1,justifyContent:"center",flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,fontWeight:700,fontSize:15}}><div style={{width:12,height:12,borderRadius:"50%",background:h.color}}/>{h.name}</div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-              <button onClick={()=>adjScore(m.id,"h",-1)} style={{width:28,height:32,border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:14,color:C.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-              <div style={{width:32,textAlign:"center",fontWeight:800,fontSize:16,color:C.text}}>{sc[m.id]?.h??0}</div>
-              <button onClick={()=>adjScore(m.id,"h",1)} style={{width:28,height:32,border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:14,color:C.text,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-            </div>
-            <span style={{fontWeight:700,color:C.muted,fontSize:18}}>:</span>
-            <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-              <button onClick={()=>adjScore(m.id,"a",-1)} style={{width:28,height:32,border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:14,color:C.muted,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-              <div style={{width:32,textAlign:"center",fontWeight:800,fontSize:16,color:C.text}}>{sc[m.id]?.a??0}</div>
-              <button onClick={()=>adjScore(m.id,"a",1)} style={{width:28,height:32,border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:14,color:C.text,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
-            </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <input type="number" min={0} value={sc[m.id]?.h??""} onChange={e=>setSc(s=>({...s,[m.id]:{...s[m.id],h:e.target.value}}))} style={{width:48,padding:"5px 8px",border:`1.5px solid ${C.border}`,borderRadius:6,fontSize:16,fontWeight:800,textAlign:"center",outline:"none"}}/>
+            <span style={{fontWeight:700,color:C.muted}}>:</span>
+            <input type="number" min={0} value={sc[m.id]?.a??""} onChange={e=>setSc(s=>({...s,[m.id]:{...s[m.id],a:e.target.value}}))} style={{width:48,padding:"5px 8px",border:`1.5px solid ${C.border}`,borderRadius:6,fontSize:16,fontWeight:800,textAlign:"center",outline:"none"}}/>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6,fontWeight:700,fontSize:15}}>{a.name}<div style={{width:12,height:12,borderRadius:"50%",background:a.color}}/></div>
         </div>
         <Btn sm onClick={()=>save(m.id)}>{m.played?"✓ Update":"Eintragen"}</Btn>
       </div>);})}
-    </div>}
-    {tab==="teams"&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
-      {t.teams.map(team=>{
-        const tm=t.matches.filter(m=>m.homeId===team.id||m.awayId===team.id);
-        const schedule=buildSchedule();
-        return(<div key={team.id} style={{background:C.card,borderRadius:12,border:`2px solid ${team.color}55`,overflow:"hidden"}}>
-          <div style={{padding:"10px 16px",background:team.color+"18",borderBottom:`1px solid ${team.color}33`,display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:14,height:14,borderRadius:"50%",background:team.color,flexShrink:0}}/>
-            <span style={{fontWeight:800,fontSize:15,color:C.text}}>{team.name}</span>
-            <span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>{tm.filter(m=>m.played).length}/{tm.length} Spiele</span>
-          </div>
-          <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:6}}>
-            {tm.length===0?<div style={{fontSize:13,color:C.muted}}>Keine Spiele</div>:
-              tm.map((m,i)=>{
-                const isHome=m.homeId===team.id;
-                const opp=gt(isHome?m.awayId:m.homeId);
-                const slot=schedule.find(s=>s.match.id===m.id);
-                const myScore=isHome?m.homeScore:m.awayScore;
-                const oppScore=isHome?m.awayScore:m.homeScore;
-                const result=m.played?(myScore>oppScore?"🏆":myScore===oppScore?"🤝":"❌"):null;
-                return(<div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 10px",borderRadius:8,background:m.played?"#f8fafc":"white",border:`1px solid ${C.border}`,flexWrap:"wrap"}}>
-                  {slot&&<span style={{fontSize:11,fontWeight:700,color:C.muted,minWidth:40}}>{fmtTime(slot.startMin)}</span>}
-                  {fields>1&&slot&&<span style={{fontSize:11,color:C.muted}}>F{slot.field}</span>}
-                  <div style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:opp?.color,flexShrink:0}}/>
-                    <span style={{fontWeight:600,fontSize:13,color:C.text}}>vs. {opp?.name}</span>
-                  </div>
-                  {m.played?<span style={{fontSize:13,fontWeight:800,color:C.text}}>{result} {myScore}:{oppScore}</span>:<span style={{fontSize:12,color:C.muted}}>offen</span>}
-                </div>);
-              })}
-          </div>
-        </div>);
-      })}
-    </div>}
-    {tab==="schedule"&&<div>
-      <div style={{display:"flex",gap:10,alignItems:"flex-end",marginBottom:16,flexWrap:"wrap"}}>
-        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:.6}}>Startzeit</label><input type="time" value={startTime} onChange={e=>setStartTime(e.target.value)} style={{padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",fontFamily:"inherit"}}/></div>
-        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:.6}}>Pause zw. Spielen (Min)</label><Stepper value={pauseMin} onChange={setPauseMin} min={0} max={15}/></div>
-        <div style={{fontSize:13,color:C.muted,alignSelf:"center",paddingBottom:2}}>Spieldauer: {t.matchDuration} Min · {fields} Feld{fields>1?"er":""}</div>
-      </div>
-      {fields>1&&<div style={{display:"grid",gridTemplateColumns:Array.from({length:fields},(_,fi)=>expandedField===fi?"2.5fr":"1fr").join(" "),gap:10,marginBottom:16,transition:"grid-template-columns .25s"}}>
-        {Array.from({length:fields},(_,fi)=>{
-          const fieldSlots=buildSchedule().filter(s=>s.field===fi+1);
-          return(<div key={fi} style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
-            <button onClick={()=>setExpandedField(expandedField===fi?null:fi)} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",background:TCOLORS[fi]+"22",borderBottom:`1px solid ${C.border}`,fontWeight:800,fontSize:13,color:C.text,border:"none",cursor:"pointer",fontFamily:"inherit"}}>⚽ Feld {fi+1}{expandedField===fi?" ↙":" ↔"}</button>
-            <div style={{padding:"8px 10px",display:"flex",flexDirection:"column",gap:4}}>
-              {fieldSlots.map((sl,i)=>{const h=gt(sl.match.homeId),a=gt(sl.match.awayId);return(<div key={i} style={{fontSize:12,padding:"4px 8px",borderRadius:6,background:sl.match.played?"#f0fdf4":"#f8fafc",border:`1px solid ${C.border}`}}>
-                <div style={{fontWeight:700,color:C.muted,marginBottom:2}}>{fmtTime(sl.startMin)}</div>
-                <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                  <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}><span style={{width:8,height:8,borderRadius:"50%",background:h?.color,display:"inline-block",flexShrink:0}}/><span style={{fontWeight:700,fontSize:12,wordBreak:"break-word"}}>{h?.name}</span></div>
-                  <div style={{fontSize:10,color:C.muted,fontWeight:700,paddingLeft:12}}>vs.</div>
-                  <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}><span style={{width:8,height:8,borderRadius:"50%",background:a?.color,display:"inline-block",flexShrink:0}}/><span style={{fontWeight:700,fontSize:12,wordBreak:"break-word"}}>{a?.name}</span></div>
-                </div>
-                {sl.match.played&&<div style={{fontSize:11,color:"#16a34a",fontWeight:700}}>{sl.match.homeScore}:{sl.match.awayScore} ✓</div>}
-              </div>);})}
-            </div>
-          </div>);
-        })}
-      </div>}
-      {fields===1&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
-        {buildSchedule().map((sl,i)=>{const h=gt(sl.match.homeId),a=gt(sl.match.awayId);return(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:8,background:sl.match.played?"#f0fdf4":C.card,border:`1.5px solid ${sl.match.played?"#22c55e":C.border}`,flexWrap:"wrap"}}>
-          <span style={{fontSize:13,fontWeight:800,color:C.muted,minWidth:44}}>{fmtTime(sl.startMin)}</span>
-          <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center"}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0}}><div style={{width:10,height:10,borderRadius:"50%",background:h?.color,flexShrink:0}}/><span style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h?.name}</span></div>
-            {sl.match.played?<span style={{fontWeight:800,fontSize:15,color:C.text,flexShrink:0}}>{sl.match.homeScore}:{sl.match.awayScore}</span>:<span style={{color:C.muted,flexShrink:0}}>vs.</span>}
-            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0,justifyContent:"flex-end"}}><span style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a?.name}</span><div style={{width:10,height:10,borderRadius:"50%",background:a?.color,flexShrink:0}}/></div>
-          </div>
-          <span style={{fontSize:12,color:C.muted}}>⏱ {t.matchDuration} Min</span>
-        </div>);})}
-      </div>}
-    </div>}
-    {tab==="uebersicht"&&<div>
-      <div style={{background:"#f0f9ff",borderRadius:10,padding:"10px 14px",marginBottom:16,border:"1px solid #bae6fd",fontSize:13,color:"#0369a1"}}>
-        Zeigt welche Teams gleichzeitig spielen und wie viele Kinder pro Feld aktiv sind. Weise optional Trainer den Feldern zu.
-      </div>
-      {/* Trainer-Zuweisung */}
-      {coaches.length>0&&<div style={{marginBottom:16}}>
-        <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>Trainer-Zuweisung pro Feld</div>
-        <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(fields,3)},1fr)`,gap:8}}>
-          {Array.from({length:fields},(_,fi)=>(
-            <div key={fi} style={{padding:"8px 12px",borderRadius:8,background:TCOLORS[fi]+"18",border:`1.5px solid ${TCOLORS[fi]}44`}}>
-              <div style={{fontWeight:700,fontSize:12,color:C.text,marginBottom:6}}>⚽ Feld {fi+1}</div>
-              <select value={coachAssign[fi]||""} onChange={e=>assignCoach(fi,e.target.value)} style={{width:"100%",padding:"5px 8px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12,outline:"none",background:"white"}}>
-                <option value="">– kein Trainer –</option>
-                {coaches.filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-          ))}
-        </div>
-      </div>}
-      {/* Zeitstrahl */}
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {buildSchedule().reduce((rows,sl)=>{
-          const last=rows[rows.length-1];
-          if(!last||last.startMin!==sl.startMin) rows.push({startMin:sl.startMin,slots:[]});
-          rows[rows.length-1].slots.push(sl);
-          return rows;
-        },[]).map((row,ri)=>{
-          const allTeamIds=[...new Set(row.slots.flatMap(sl=>[sl.match.homeId,sl.match.awayId]))];
-          const allTeams=allTeamIds.map(gt).filter(Boolean);
-          const kidCount=allTeams.reduce((s,tm)=>{
-            const sz=t.teamSizes?.[tm.id]||tm.players?.length||4;
-            return s+sz;
-          },0);
-          const activeCoaches=row.slots.map((sl,i)=>coachAssign[sl.field-1]).filter(Boolean);
-          const uniqueCoaches=[...new Set(activeCoaches)];
-          return(<div key={ri} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",background:C.card}}>
-            <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:"#f8fafc",borderBottom:`1px solid ${C.border}`,flexWrap:"wrap"}}>
-              <span style={{fontWeight:800,fontSize:14,color:C.text,minWidth:44}}>{fmtTime(row.startMin)}</span>
-              <span style={{fontSize:12,color:C.muted}}>⏱ {t.matchDuration} Min</span>
-              <div style={{display:"flex",gap:8,marginLeft:"auto",flexWrap:"wrap"}}>
-                <span style={{fontSize:12,fontWeight:700,padding:"2px 10px",borderRadius:20,background:"#dbeafe",color:"#1d4ed8"}}>👥 {kidCount} Kinder aktiv</span>
-                {uniqueCoaches.length>0&&<span style={{fontSize:12,fontWeight:700,padding:"2px 10px",borderRadius:20,background:"#dcfce7",color:"#15803d"}}>🧑‍🏫 {uniqueCoaches.map(id=>coaches.find(c=>c.id===id)?.name||"").join(", ")}</span>}
-              </div>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(row.slots.length,fields)},1fr)`,gap:0}}>
-              {row.slots.map((sl,si)=>{
-                const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
-                const coach=coachAssign[sl.field-1]?coaches.find(c=>c.id===coachAssign[sl.field-1]):null;
-                const hSize=t.teamSizes?.[sl.match.homeId]||h?.players?.length||4;
-                const aSize=t.teamSizes?.[sl.match.awayId]||a?.players?.length||4;
-                return(<div key={si} style={{padding:"10px 12px",borderRight:si<row.slots.length-1?`1px solid ${C.border}`:"none"}}>
-                  <div style={{fontSize:11,fontWeight:800,color:C.muted,marginBottom:6}}>⚽ Feld {sl.field}{coach?` · 🧑‍🏫 ${coach.name}`:""}</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:10,height:10,borderRadius:"50%",background:h?.color,flexShrink:0}}/><span style={{fontWeight:700,fontSize:13,color:C.text,flex:1}}>{h?.name}</span><span style={{fontSize:11,color:C.muted}}>{hSize}👦</span></div>
-                    <div style={{fontSize:10,color:C.muted,fontWeight:700,paddingLeft:16}}>vs.</div>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:10,height:10,borderRadius:"50%",background:a?.color,flexShrink:0}}/><span style={{fontWeight:700,fontSize:13,color:C.text,flex:1}}>{a?.name}</span><span style={{fontSize:11,color:C.muted}}>{aSize}👦</span></div>
-                  </div>
-                  {sl.match.played&&<div style={{fontSize:11,color:"#16a34a",fontWeight:700,marginTop:6}}>{sl.match.homeScore}:{sl.match.awayScore} ✓</div>}
-                </div>);
-              })}
-            </div>
-          </div>);
-        })}
-      </div>
     </div>}
     {tab==="table"&&<div>
       <div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
@@ -1768,10 +1062,10 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
   </div>);
 }
 
-function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[]}) {
+function TurnierPage({tournaments,onSaveTournament,onDeleteTournament}) {
   const [modal,setModal]=useState(null);
   const [open,setOpen]=useState(null);
-  if(open){const t=tournaments.find(x=>x.id===open);if(!t){setOpen(null);return null;}return<TournamentDetail tournament={t} onUpdate={onSaveTournament} onBack={()=>setOpen(null)} coaches={coaches}/>;}
+  if(open){const t=tournaments.find(x=>x.id===open);if(!t){setOpen(null);return null;}return<TournamentDetail tournament={t} onUpdate={onSaveTournament} onBack={()=>setOpen(null)}/>;}
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
       <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Turnier</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{tournaments.length} Turniere</div></div>
@@ -1876,17 +1170,7 @@ function KassePage({kassenbuch,onSave,onDelete,toast}) {
 }
 
 // ── SETTINGS PAGE ─────────────────────────────────────────────────
-function AddCatForm({onAdd}) {
-  const EMOJIS=["🌀","💡","🎪","🏃","🤸","🎭","🧩","⚡","🎈","🦁","🦊","🐬","🔴","🟠","🟡","🟢","🔵","🟣"];
-  const [label,setLabel]=useState("");const [emoji,setEmoji]=useState("🌀");
-  const add=()=>{if(!label.trim())return;const idx=Math.floor(Math.random()*6);const pal=CUSTOM_CAT_PALETTE[idx];onAdd({label:label.trim(),emoji,color:pal.color,bg:pal.bg,builtin:false});setLabel("");};
-  return(<div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-    <select value={emoji} onChange={e=>setEmoji(e.target.value)} style={{padding:"8px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:16,background:"white",cursor:"pointer",outline:"none"}}>{EMOJIS.map(e=><option key={e} value={e}>{e}</option>)}</select>
-    <input value={label} onChange={e=>setLabel(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Kategoriename..." style={{flex:1,minWidth:120,padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",fontFamily:"inherit"}}/>
-    <Btn sm onClick={add}><Plus size={13}/> Hinzufügen</Btn>
-  </div>);
-}
-function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats}) {
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));onImport(d,mode);toast("Import erfolgreich");}}catch(er){toast("Fehler: "+er.message,"err");}e.target.value=""; };
   const EC=({icon,title,desc,sub,fn})=><div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><div style={{fontWeight:700,fontSize:14,color:C.text}}>{icon} {title}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{desc}</div>{sub&&<div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{sub}</div>}</div><Btn sm onClick={fn}><Download size={13}/> Export</Btn></div>;
@@ -1899,32 +1183,16 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       {apiKey&&<div style={{marginTop:8,fontSize:12,color:"#16a34a",fontWeight:600}}>✅ API-Key aktiv – KI-Funktionen verfügbar</div>}
     </div>}/>
     <Sec title="📤 Exportieren" ch={<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`gjugend_backup_${todayISO()}.json`,toast)}/>
-      <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`gjugend_uebungen_${todayISO()}.json`,toast)}/>
-      <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`gjugend_team_${todayISO()}.json`,toast)}/>
-      <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={async()=>dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`gjugend_spieler_${todayISO()}.csv`,toast)}/>
-      <EC icon="📅" title="Training" desc="Alle Trainingseinheiten" sub={`${sessions.length} Einheiten`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"sessions",sessions},`gjugend_training_${todayISO()}.json`,toast)}/>
-      <EC icon="🏆" title="Turniere" desc="Alle Turniere & Ergebnisse" sub={`${tournaments.length} Turniere`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"tournaments",tournaments},`gjugend_turniere_${todayISO()}.json`,toast)}/>
-      <EC icon="💰" title="Kassenbuch" desc="Einnahmen & Ausgaben" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"kassenbuch",kassenbuch},`gjugend_kasse_${todayISO()}.json`,toast)}/>
-      <EC icon="📋" title="Kassenbuch (CSV)" desc="Für Excel & Steuer" sub={`${kassenbuch.length} Einträge`} fn={async()=>dlCsv(kassenbuch,["date","description","amount","type","category"],`gjugend_kasse_${todayISO()}.csv`,toast)}/>
+      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`gjugend_backup_${todayISO()}.json`);toast("Backup exportiert");}}/>
+      <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`gjugend_uebungen_${todayISO()}.json`);toast("Übungen exportiert");}}/>
+      <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={()=>{dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`gjugend_team_${todayISO()}.json`);toast("Team exportiert");}}/>
+      <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={()=>{dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`gjugend_spieler_${todayISO()}.csv`);toast("CSV exportiert");}}/>
     </div>}/>
     <Sec title="📥 Importieren" ch={<div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"16px 18px"}}>
       <div style={{marginBottom:12}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Modus</label><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{[["merge","Zusammenführen"],["replace","Ersetzen ⚠️"]].map(([k,l])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 14px",borderRadius:8,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",color:mode===k?C.primary:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{l}</button>)}</div></div>
-      <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:C.muted}}>Unterstützt: JSON Backup · Übungen · Team · Training · Turniere · Kassenbuch · Spieler-CSV</div>
+      <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:C.muted}}>Unterstützt: JSON Backup, Übungen-JSON, Team-JSON, Spieler-CSV</div>
       <Btn onClick={()=>ref.current.click()}><Upload size={14}/> Datei auswählen</Btn>
       <input ref={ref} type="file" accept=".json,.csv" onChange={doImport} style={{display:"none"}}/>
-    </div>}/>
-    <Sec title="🏷️ Eigene Kategorien" ch={<div>
-      <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Füge eigene Trainings-Kategorien hinzu. Sie erscheinen in der Bibliothek und bei der Planung.</div>
-      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
-        {(customCats||[]).map((cc,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:"#f8fafc",border:`1.5px solid ${C.border}`}}>
-          <span style={{fontSize:18}}>{cc.emoji}</span>
-          <span style={{fontWeight:700,fontSize:14,color:cc.color,flex:1}}>{cc.label}</span>
-          <span style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:cc.bg,color:cc.color,fontWeight:700}}>Vorschau</span>
-          <button onClick={()=>onSaveCustomCats((customCats||[]).filter((_,j)=>j!==i))} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4,fontSize:16}}>✕</button>
-        </div>)}
-      </div>
-      <AddCatForm onAdd={cc=>onSaveCustomCats([...(customCats||[]),cc])}/>
     </div>}/>
     <div style={{textAlign:"center",padding:"20px 0",color:"#cbd5e1",fontSize:12}}>G-Jugend Coach v{APP_VERSION} · Made with ⚽ for G-Jugend Hamburg</div>
   </div>);
@@ -1957,14 +1225,6 @@ export default function App() {
   const [tournaments,setTournaments,tr]=useStorage("tournaments",[]);
   const [kassenbuch, setKassenbuch, kr]=useStorage("kassenbuch", []);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
-  const [customCats, setCustomCats    ]=useStorage("customCats", []);
-  // Sync CATS global whenever customCats changes
-  useEffect(()=>{
-    const merged={...BUILTIN_CATS};
-    (customCats||[]).forEach((cc,i)=>{ merged['custom_'+i]={...cc}; });
-    Object.keys(CATS).forEach(k=>{if(k.startsWith('custom_'))delete CATS[k];});
-    Object.assign(CATS,merged);
-  },[customCats]);
   const {toast,Toasts}=useToast();
   // Functional update helpers - prevent stale closure bugs
   const mergeArr=(inc)=>prev=>{ const m=Object.fromEntries(prev.map(e=>[e.id,e]));inc?.forEach(i=>{if(!m[i.id])m[i.id]=i;});return Object.values(m); };
@@ -2003,10 +1263,10 @@ export default function App() {
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{setExercises(prev=>prev.filter(e=>e.id!==id));toast("Übung gelöscht");}} apiKey={apiKey} toast={toast}/>}
       {page==="team"     &&<TeamPage     players={players} coaches={coaches} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds})=>{setSessions(prev=>[...prev,{id:uid(),createdAt:now(),date:todayISO(),duration:60,location:"",weather:"",participantCount:"",coachIds,playerIds,exerciseIds:[],teams:[],notes:""}]);setPage("training");toast("Training angelegt ✓");}}/>}
-      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx}/>}
-      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}} coaches={coaches}/>}
+      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast}/>}
+      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
-      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats}/>}
+      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)}/>}
     </main>
   </div>);
 }
