@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "3.1.1";
+const APP_VERSION = "3.2.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -1251,6 +1251,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
   const [coaches,setCoaches]=useState(setup?.coachCount||1);
   const [totalMin,setTotalMin]=useState(setup?.duration||60);
   const [blocks,setBlocks]=useState(BLOCKS.map(b=>({...b,active:b.key!=="mittel2",parallel:false,stations:2,parallelExercises:{},pick:"random",exerciseId:null,minutes:b.defaultMin})));
+  const [breakMin,setBreakMin]=useState(2);
   const [plan,setPlan]=useState(null);
   const [planTeams,setPlanTeams]=useState([]);
   const [showTeamBuilder,setShowTeamBuilder]=useState(false);
@@ -1260,7 +1261,9 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
 
   const setBlock=(key,field,val)=>setBlocks(bs=>bs.map(b=>b.key===key?{...b,[field]:val}:b));
   const activeBlocks=blocks.filter(b=>b.active);
-  const usedMin=activeBlocks.reduce((s,b)=>s+b.minutes,0);
+  // Breaks happen between blocks (not after ankommen, not after last block)
+  const breakCount=Math.max(0,activeBlocks.filter(b=>!b.fixedFree).length-1);
+  const usedMin=activeBlocks.reduce((s,b)=>s+b.minutes,0)+breakCount*breakMin;
   const remaining=totalMin-usedMin;
 
   const pickExercise=(cat,excludeId)=>{
@@ -1288,7 +1291,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
 
       return {block:b,exercise:ex,stations,kids:b.parallel?`${kidsPerStation}/Station`:kids,minutes:b.minutes};
     });
-    setPlan({phases,kids,coaches,totalMin,date:setup?.date||todayISO(),location:setup?.location||""});
+    setPlan({phases,kids,coaches,totalMin,breakMin,date:setup?.date||todayISO(),location:setup?.location||""});
   };
 
   const phCol={ankommen:"#f8fafc",aufwaermen:"#fff7ed",koordination:"#f5f3ff",technik:"#eff6ff",spielform:"#f0fdf4",abschluss:"#fdf2f8"};
@@ -1405,11 +1408,12 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
         <h3 style={{margin:0,fontWeight:800,color:C.text}}>Trainingsplan</h3>
         <span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalMin} Min · 👥 {plan.kids} Kinder · 🧑‍🏫 {plan.coaches} Trainer</span>
       </div>
-      <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+      <div style={{display:"flex",flexDirection:"column",gap:0,marginBottom:16}}>
         {plan.phases.map((ph,i)=>{
+          const showBreak=i<plan.phases.length-1&&!ph.isFree&&plan.breakMin>0;
           const bg=phCol[ph.block.cat||"ankommen"]||"#f8fafc";
           const rotMin=Math.floor(ph.minutes/2);
-          return(<div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
+          const phaseEl=(<div>
             <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{fontWeight:800,fontSize:14}}>{ph.block.emoji} {ph.block.label}</div>
               <div style={{fontSize:12,color:C.muted,display:"flex",gap:10}}><span>⏱ {ph.minutes} Min</span><span>👥 {ph.kids} Kinder</span></div>
@@ -1451,6 +1455,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
                 </div>}
             </div>
           </div>);
+          return <React.Fragment key={i}><div style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",marginBottom:showBreak?0:10}}>{phaseEl}</div>{showBreak&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 16px",color:"#94a3b8",fontSize:12}}><div style={{flex:1,height:1,background:"#e2e8f0"}}/><span>⏸ {plan.breakMin} Min Pause</span><div style={{flex:1,height:1,background:"#e2e8f0"}}/></div>}</React.Fragment>;
         })}
       </div>
       {remaining!==0&&<div style={{padding:"8px 14px",borderRadius:8,background:remaining>0?"#f0fdf4":"#fef2f2",border:`1px solid ${remaining>0?"#86efac":"#fca5a5"}`,fontSize:13,color:remaining>0?"#166534":"#991b1b",marginBottom:12}}>
@@ -1513,10 +1518,15 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
       📋 Wähle Blöcke, Dauer und Anzahl – der Planer sucht passende Übungen aus deiner Bibliothek. Blöcke können parallel laufen (Kinder rotieren zwischen Stationen).
     </div>
 
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
       <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder</label><Stepper value={kids} onChange={setKids} min={4} max={30}/></div>
       <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Trainer</label><Stepper value={coaches} onChange={setCoaches} min={1} max={6}/></div>
       <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Gesamt (Min)</label><Stepper value={totalMin} onChange={setTotalMin} min={20} max={120}/></div>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16,padding:"8px 14px",background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`}}>
+      <span style={{fontSize:13,color:C.muted,flex:1}}>⏸ Pause zwischen Blöcken</span>
+      <Stepper value={breakMin} onChange={setBreakMin} min={0} max={10}/>
+      <span style={{fontSize:13,color:C.muted}}>Min</span>
     </div>
 
     <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
@@ -1576,10 +1586,11 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
       </div>)}
     </div>
 
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderRadius:8,background:remaining>=0?"#f0fdf4":"#fef2f2",border:`1px solid ${remaining>=0?"#86efac":"#fca5a5"}`,marginBottom:16}}>
-      <span style={{fontSize:13,fontWeight:700,color:remaining>=0?"#166534":"#991b1b"}}>
+    <div style={{padding:"10px 14px",borderRadius:8,background:remaining>=0?"#f0fdf4":"#fef2f2",border:`1px solid ${remaining>=0?"#86efac":"#fca5a5"}`,marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:700,color:remaining>=0?"#166534":"#991b1b"}}>
         {remaining>=0?`✓ ${usedMin} von ${totalMin} Min geplant (${remaining} Min Puffer)`:`⚠️ ${Math.abs(remaining)} Min zu viel – Blöcke kürzen`}
-      </span>
+      </div>
+      {breakCount>0&&<div style={{fontSize:11,color:remaining>=0?"#166534":"#991b1b",marginTop:2,opacity:.8}}>inkl. {breakCount}× {breakMin} Min Pause = {breakCount*breakMin} Min</div>}
     </div>
 
     <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
@@ -1588,7 +1599,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     </div>
   </div>);
 }
-function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,onSaveSession,onReplan}) {
+function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,onSaveSession,onReplan,onPrint}) {
   const gP=id=>players.find(p=>p.id===id);
   const gC=id=>coaches.find(c=>c.id===id);
   const gE=id=>exercises.find(e=>e.id===id);
@@ -1663,13 +1674,70 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
     {/* Notes */}
     {s.notes&&<div style={{marginBottom:14,padding:"10px 14px",background:"#fffbeb",borderRadius:8,border:"1px solid #fde68a",fontSize:13,color:C.text,lineHeight:1.6}}>💬 {s.notes}</div>}
     {/* Actions */}
-    <div style={{display:"flex",gap:8,justifyContent:"flex-end",paddingTop:14,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
-      <Btn sm variant="danger" onClick={()=>{if(confirm("Training löschen?"))onDelete();}}><Trash2 size={13}/> Löschen</Btn>
-      <Btn sm variant="secondary" onClick={onEdit}><Edit2 size={13}/> Felder</Btn>
-      {onReplan&&<Btn sm variant="secondary" onClick={onReplan}><RefreshCw size={13}/> Neu planen</Btn>}
-      <Btn sm onClick={onClose}>Schließen</Btn>
+    <div style={{paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+      {(onReplan||onPrint)&&<div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+        {onReplan&&<Btn onClick={onReplan} style={{flex:1,justifyContent:"center"}}><RefreshCw size={14}/> Neu planen</Btn>}
+        {onPrint&&<Btn onClick={onPrint} variant="secondary" style={{flex:1,justifyContent:"center"}}>🖨️ PDF erstellen</Btn>}
+      </div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
+        <Btn sm variant="danger" onClick={()=>{if(confirm("Training löschen?"))onDelete();}}><Trash2 size={13}/> Löschen</Btn>
+        <Btn sm variant="secondary" onClick={onEdit}><Edit2 size={13}/> Felder</Btn>
+        <Btn sm onClick={onClose}>Schließen</Btn>
+      </div>
     </div>
   </div>);
+}
+
+
+function printSession(s,exercises,toast) {
+  const esc=t=>String(t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const ex=(s.exerciseIds||[]).map(id=>exercises.find(e=>e.id===id)).filter(Boolean);
+  const bgMap={aufwaermen:"#fff3e0",koordination:"#f3e8ff",technik:"#e8f0fe",spielform:"#e8f5e9",abschluss:"#fce4ec"};
+  const colMap={aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
+
+  const exHtml=ex.map(e=>{
+    const bg=bgMap[e.category]||"#f8fafc";
+    const col=colMap[e.category]||"#374151";
+    const img=e.imageUrl?`<img src="${e.imageUrl}" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px;margin:8px 0;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+    return `<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid">
+      <div style="background:${bg};padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:16px">${esc(CATS[e.category]?.emoji||"📋")}</span>
+        <span style="font-weight:800;font-size:15px;color:${col};flex:1">${esc(e.title)}</span>
+        ${e.duration?`<span style="font-size:12px;color:#64748b">⏱ ${e.duration} Min</span>`:""}
+        ${e.minPlayers?`<span style="font-size:12px;color:#64748b">👥 ${e.minPlayers}–${e.maxPlayers}</span>`:""}
+      </div>
+      <div style="padding:12px 16px">
+        ${img}
+        ${e.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin-bottom:8px;border-left:3px solid #94a3b8"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">📐 Aufbau</div><div style="font-size:13px;line-height:1.6">${esc(e.setup)}</div></div>`:""}
+        ${e.description?`<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">🎯 Ablauf</div><div style="font-size:13px;line-height:1.7">${esc(e.description)}</div></div>`:""}
+        ${e.material?.length?`<div style="font-size:12px;color:#6b7280;margin-bottom:4px">📦 Material: ${esc(e.material.join(", "))}</div>`:""}
+        ${e.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic">💡 ${esc(e.notes)}</div>`:""}
+      </div>
+    </div>`;
+  }).join("");
+
+  const teamsHtml=(s.teams||[]).length?`
+    <div style="border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:14px;page-break-inside:avoid">
+      <div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">
+        ${(s.teams||[]).map(t=>`<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}
+      </div>
+    </div>`:"";
+
+  const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111}h1{font-size:22px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%}@media print{body{padding:12px}@page{margin:1.5cm}}`;
+  const notes=s.notes?`<div style="margin-bottom:16px;padding:10px 14px;background:#fffbeb;border-radius:8px;border:1px solid #fde68a;font-size:13px">${esc(s.notes)}</div>`:"";
+  const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Training ${s.date||""}</title><style>${css}</style></head><body>
+    <h1>Trainingsplan</h1>
+    <div class="meta">📅 ${esc(s.date)} &nbsp;·&nbsp; ⏱ ${s.duration} Min &nbsp;·&nbsp; 👥 ${s.participantCount||"–"} Kinder${s.location?` &nbsp;·&nbsp; 📍 ${esc(s.location)}`:""}</div>
+    ${notes}
+    ${teamsHtml}
+    ${ex.length?`<h2 style="font-size:16px;font-weight:800;margin:0 0 12px">📚 Übungen (${ex.length})</h2>${exHtml}`:`<p style="color:#9ca3af">Keine Übungen verknüpft.</p>`}
+    <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
+  </body></html>`;
+
+  const w=window.open("","_blank");
+  if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
+  else{saveFileSync(html,"Training_"+s.date+".html","text/html");toast("Als HTML gespeichert – im Browser öffnen und drucken");}
 }
 
 
@@ -1726,7 +1794,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
     {modal?.type==="ai"&&<Modal title={modal.replaceId?"🤖 Neu planen (KI)":"🤖 KI-Trainingsplan"} onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={teams=>{if(modal.data.session)onSaveSession({...modal.data.session,teams});setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession} onReplan={()=>{
+    {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession} onPrint={()=>printSession(modal.data,exercises,toast)} onReplan={()=>{
       const s=modal.data;
       setModal({type:"setup",replaceId:s.id,setup:{kids:Number(s.participantCount)||players.filter(p=>p.active).length,coachCount:s.coachIds?.length||1,duration:s.duration||60,location:s.location==="Halle"?"indoor":"outdoor",date:s.date,playerIds:s.playerIds||[],coachIds:s.coachIds||[],focus:""}});
     }}/></Modal>}
