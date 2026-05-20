@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "3.0.1";
+const APP_VERSION = "3.1.1";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -386,7 +386,7 @@ category: aufwaermen|koordination|technik|spielform|abschluss`;
 }
 
 // ── AI TRAINING PLAN ──────────────────────────────────────────────
-function AITrainingModal({players,exercises,onClose,apiKey,onSaveEx,onSaveSession,setup}) {
+function AITrainingModal({players,exercises,onClose,apiKey,onSaveEx,onSaveSession,setup,replaceId}) {
   const MAT_OPTS=["Bälle","Hütchen","Leibchen","Minitore","Koordinationsleiter","Stangen","Reifen","Pylonen"];
   const [cfg,setCfg]=useState({kids:setup?.kids||players.filter(p=>p.active).length||10,coaches:setup?.coachCount||1,duration:setup?.duration||60,focus:setup?.focus||"",useLib:true,location:setup?.location||"outdoor",material:[...MAT_OPTS]});
   const [loading,setLoading]=useState(false);
@@ -488,7 +488,7 @@ Antworte NUR mit JSON:
 
   const saveAsTraining=()=>{
     if(!onSaveSession)return;
-    const draft={id:uid(),createdAt:now(),date:setup?.date||todayISO(),duration:cfg.duration,location:cfg.location==="indoor"?"Halle":"",weather:"",participantCount:String(cfg.kids),coachIds:setup?.coachIds||[],playerIds:setup?.playerIds||[],exerciseIds:getExIds(),teams:[],notes:`📋 KI-Entwurf: ${plan.title}${plan.generalTips?'\n💡 '+plan.generalTips:""}`,isDraft:true};
+    const draft={id:replaceId||uid(),createdAt:now(),date:setup?.date||todayISO(),duration:cfg.duration,location:cfg.location==="indoor"?"Halle":"",weather:"",participantCount:String(cfg.kids),coachIds:setup?.coachIds||[],playerIds:setup?.playerIds||[],exerciseIds:getExIds(),teams:[],notes:`📋 KI-Entwurf: ${plan.title}${plan.generalTips?'\n💡 '+plan.generalTips:""}`,isDraft:!replaceId};
     onSaveSession(draft);clearDraft();onClose();
   };
 
@@ -1245,7 +1245,7 @@ const BLOCKS = [
   {key:"abschluss",   label:"Abschluss",          emoji:"🌅", cat:"abschluss",               defaultMin:5},
 ];
 
-function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,toast,setup}) {
+function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,toast,setup,replaceId}) {
   const activeCount=players.filter(p=>p.active).length;
   const [kids,setKids]=useState(setup?.kids||activeCount||10);
   const [coaches,setCoaches]=useState(setup?.coachCount||1);
@@ -1294,23 +1294,109 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
   const phCol={ankommen:"#f8fafc",aufwaermen:"#fff7ed",koordination:"#f5f3ff",technik:"#eff6ff",spielform:"#f0fdf4",abschluss:"#fdf2f8"};
 
   const printPlan=()=>{
-    const css=`body{font-family:system-ui,sans-serif;padding:20px;max-width:800px;margin:0 auto;color:#111}h1{font-size:22px;margin:0 0 4px}h2{font-size:15px;margin:12px 0 6px;padding:6px 10px;border-radius:6px;background:#f1f5f9}h3{font-size:13px;margin:4px 0;color:#374151}.meta{font-size:13px;color:#6b7280;margin-bottom:16px}.phase{border:1.5px solid #e2e8f0;border-radius:8px;margin-bottom:10px;overflow:hidden}.phase-header{padding:8px 14px;font-weight:800;font-size:14px;display:flex;justify-content:space-between;align-items:center}.station{padding:8px 12px;border-top:1px solid #e2e8f0;font-size:13px}.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;background:#eff6ff;color:#1d4ed8;margin-left:6px}@media print{body{padding:10px}button{display:none}}`;
-    const rows=plan.phases.map(ph=>{
-      const bg={ankommen:"#f8fafc",aufwaermen:"#fff7ed",koordination:"#f5f3ff",technik:"#eff6ff",spielform:"#f0fdf4",abschluss:"#fdf2f8"}[ph.block.cat||ph.block.key]||"#f8fafc";
+    const esc=s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const bgMap={ankommen:"#f1f5f9",aufwaermen:"#fff3e0",koordination:"#f3e8ff",technik:"#e8f0fe",spielform:"#e8f5e9",abschluss:"#fce4ec"};
+    const colMap={ankommen:"#475569",aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
+
+    const exBlock=(ex,label)=>{
+      if(!ex) return `<p style="color:#9ca3af;font-style:italic">Keine Übung in Bibliothek</p>`;
+      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:180px;object-fit:contain;border-radius:6px;margin:8px 0;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:""
+      return `
+        <div style="margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <strong style="font-size:15px">${esc(ex.title)}</strong>
+          <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#eff6ff;color:#1d4ed8;font-weight:700">${esc(CATS[ex.category]?.emoji)} ${esc(CATS[ex.category]?.label||ex.category)}</span>
+          ${ex.duration?`<span style="font-size:11px;color:#6b7280">⏱ ${ex.duration} Min</span>`:""}
+          ${ex.minPlayers?`<span style="font-size:11px;color:#6b7280">👥 ${ex.minPlayers}–${ex.maxPlayers} Kinder</span>`:""}
+        </div>
+        ${img}
+        ${ex.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin:6px 0;border-left:3px solid #94a3b8"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px">📐 Aufbau</span><br><span style="font-size:13px;line-height:1.6">${esc(ex.setup)}</span></div>`:""}
+        ${ex.description?`<div style="margin:6px 0"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px">🎯 Ablauf</span><br><p style="font-size:13px;line-height:1.7;margin:4px 0">${esc(ex.description)}</p></div>`:""}
+        ${ex.material?.length?`<div style="margin:4px 0;font-size:12px;color:#6b7280">📦 Material: ${esc(ex.material.join(", "))}</div>`:""}
+        ${ex.notes?`<div style="margin:6px 0;padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic">💡 ${esc(ex.notes)}</div>`:""}
+      `;
+    };
+
+    const rows=plan.phases.map((ph,i)=>{
+      const bg=bgMap[ph.block.cat||ph.block.key]||"#f8fafc";
+      const col=colMap[ph.block.cat||ph.block.key]||"#374151";
       let body="";
-      if(ph.isFree){body=`<div style="padding:8px 14px;font-size:13px;color:#64748b">⚽ Kinder spielen frei — Trainer bauen parallel auf<br>🧑‍🏫 Trainer nutzen diese Zeit für Aufbau der nächsten Station</div>`;}
-      else if(ph.stations){
+      if(ph.isFree){
+        body=`<div style="padding:10px 14px;font-size:13px;color:#475569">
+          <p style="margin:0">⚽ <strong>Kinder spielen frei</strong> — kein Trainer-Input nötig.</p>
+          <p style="margin:6px 0 0;padding:6px 10px;background:#faf5ff;border-radius:6px;color:#6d28d9;font-size:12px">🧑‍🏫 Trainer nutzen diese ${ph.minutes} Min zum Aufbau der nächsten Station.</p>
+        </div>`;
+      } else if(ph.stations){
         const rot=Math.floor(ph.minutes/2);
-        body=`<div style="padding:6px 14px 2px;font-size:12px;color:#7c3aed;font-weight:700">🔄 Rotation nach ${rot} Min — ${ph.block.stations} Gruppen wechseln</div>`;
-        body+=ph.stations.map((st,i)=>`<div class="station"><strong>${st.label} (${st.kids} Kinder):</strong> ${st.exercise?st.exercise.title:"–"}${st.exercise?.description?`<br><span style="color:#6b7280;font-size:12px">${st.exercise.description.slice(0,120)}${st.exercise.description.length>120?"…":""}</span>`:""}${st.exercise?.material?.length?`<br><span style="font-size:11px;color:#6b7280">📦 ${st.exercise.material.join(", ")}</span>`:""}</div>`).join("");
+        body=`<div style="padding:8px 14px 2px;font-size:12px;color:#7c3aed;font-weight:700;background:#faf5ff;border-bottom:1px solid #e9d5ff">
+          🔄 Rotation nach ${rot} Min (Pfiff) — ${ph.block.stations} Gruppen wechseln im Uhrzeigersinn
+        </div>`;
+        body+=ph.stations.map((st,j)=>`
+          <div style="padding:12px 14px;border-top:1px solid #e5e7eb${j>0?";page-break-inside:avoid":""}">
+            <div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:8px">📍 ${esc(st.label)} · ${st.kids} Kinder</div>
+            ${exBlock(st.exercise,st.label)}
+          </div>`).join("");
+        body+=`<div style="padding:6px 14px;background:#fef9c3;font-size:12px;color:#92400e;font-weight:600">⏱ Nach ${rot} Min: Pfiff → alle Gruppen rücken eine Station weiter</div>`;
       } else {
-        body=`<div style="padding:8px 14px;font-size:13px">${ph.exercise?`<strong>${ph.exercise.title}</strong>${ph.exercise.description?`<br><span style="color:#6b7280">${ph.exercise.description.slice(0,200)}${ph.exercise.description.length>200?"…":""}</span>`:""}${ph.exercise.material?.length?`<br><span style="font-size:11px;color:#6b7280">📦 ${ph.exercise.material.join(", ")}</span>`:""}`:`<span style="color:#6b7280;font-style:italic">Freie Übung / wird vor Ort bestimmt</span>`}</div>`;
+        body=`<div style="padding:12px 14px">${exBlock(ph.exercise,ph.block.label)}</div>`;
       }
-      return `<div class="phase"><div class="phase-header" style="background:${bg}">${ph.block.emoji} ${ph.block.label}<span style="font-size:12px;color:#64748b">⏱ ${ph.minutes} Min · 👥 ${ph.isFree?ph.kids:ph.kids} Kinder</span></div>${body}</div>`;
+      return `
+        <div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid">
+          <div style="background:${bg};padding:10px 16px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:800;font-size:15px;color:${col}">${ph.block.emoji} ${esc(ph.block.label)}</span>
+            <span style="font-size:12px;color:#64748b;font-weight:600">⏱ ${ph.minutes} Min &nbsp;·&nbsp; 👥 ${ph.kids} Kinder</span>
+          </div>
+          ${body}
+        </div>`;
     }).join("");
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Trainingsplan</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${plan.date||todayISO()} · ⏱ ${plan.totalMin} Min · 👥 ${plan.kids} Kinder · 🧑‍🏫 ${plan.coaches} Trainer${plan.location?" · 📍 "+plan.location:""}</div>${rows}<div style="margin-top:16px;font-size:11px;color:#94a3b8">Erstellt mit G-Jugend Coach App</div></body></html>`;
+
+    const teamsHtml=planTeams.length?`
+      <div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
+        <div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:12px">
+          ${planTeams.map((t,i)=>`
+            <div style="border:1.5px solid #e2e8f0;border-radius:8px;padding:10px">
+              <div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>
+              ${t.players.map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}
+              ${t.players.length?`<div style="font-size:11px;color:#9ca3af;margin-top:4px">Ø ${(t.players.reduce((s,p)=>s+(p.strength||2),0)/t.players.length).toFixed(1)}</div>`:""}
+            </div>`).join("")}
+        </div>
+      </div>`:"";
+
+    const css=`
+      *{box-sizing:border-box}
+      body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}
+      h1{font-size:24px;margin:0 0 4px;color:#111}
+      .meta{font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}
+      .footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}
+      img{max-width:100%}
+      @media print{
+        body{padding:12px}
+        @page{margin:1.5cm}
+      }
+    `;
+
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${plan.date||todayISO()}</title><style>${css}</style></head><body>
+      <h1>Trainingsplan</h1>
+      <div class="meta">
+        📅 ${esc(plan.date||todayISO())} &nbsp;·&nbsp; ⏱ ${plan.totalMin} Min &nbsp;·&nbsp; 👥 ${plan.kids} Kinder &nbsp;·&nbsp; 🧑‍🏫 ${plan.coaches} Trainer${plan.location?` &nbsp;·&nbsp; 📍 ${esc(plan.location)}`:""}
+      </div>
+      ${rows}
+      ${teamsHtml}
+      <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
+    </body></html>`;
+
     const w=window.open("","_blank");
-    if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),400);}
+    if(w){
+      w.document.write(html);
+      w.document.close();
+      // Warte bis Bilder geladen sind, dann drucken
+      w.onload=()=>setTimeout(()=>w.print(),300);
+      setTimeout(()=>w.print(),800); // Fallback
+    } else {
+      // Popup geblockt → als HTML-Datei exportieren
+      saveFileSync(html,"Trainingsplan_"+todayISO()+".html","text/html");
+      toast("PDF: Trainingsplan als HTML gespeichert – im Browser öffnen und drucken");
+    }
   };
 
   if(plan) return(
@@ -1414,7 +1500,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
         <Btn onClick={printPlan} variant="secondary">🖨️ PDF / Drucken</Btn>
         <Btn onClick={()=>{
           const exIds=[...new Set(plan.phases.flatMap(ph=>ph.stations?ph.stations.map(s=>s.exercise?.id).filter(Boolean):[ph.exercise?.id].filter(Boolean)))];
-          onSaveSession({id:uid(),createdAt:now(),date:plan.date||todayISO(),duration:plan.totalMin,location:plan.location||"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:planTeams,notes:`Manuell geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
+          onSaveSession({id:replaceId||uid(),createdAt:now(),date:plan.date||todayISO(),duration:plan.totalMin,location:plan.location||"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:planTeams,notes:`Manuell geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
           toast("Training gespeichert ✓");
           onClose();
         }}><CalendarDays size={14}/> Speichern</Btn>
@@ -1459,7 +1545,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
                 </div>
                 {b.pick==="manual"&&!b.parallel&&<select value={b.exerciseId||""} onChange={e=>setBlock(b.key,"exerciseId",e.target.value)} style={{flex:1,minWidth:140,padding:"5px 10px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none"}}>
                   <option value="">-- Übung wählen --</option>
-                  {exercises.filter(e=>!b.cat||e.category===b.cat).map(e=><option key={e.id} value={e.id}>{e.title}</option>)}
+                  {exercises.sort((a,b)=>(CATS[a.category]?.label||"").localeCompare(CATS[b.category]?.label||"")).map(e=><option key={e.id} value={e.id}>{CATS[e.category]?.emoji||""} [{CATS[e.category]?.label||e.category}] {e.title}</option>)}
                 </select>}
                 <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
                   <input type="checkbox" id={`par${b.key}`} checked={b.parallel} onChange={e=>setBlock(b.key,"parallel",e.target.checked)} style={{width:15,height:15}}/>
@@ -1479,7 +1565,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
                     <span style={{fontSize:12,fontWeight:700,color:C.primary,minWidth:60}}>Gruppe {si+1}</span>
                     <select value={b.parallelExercises?.[si]||""} onChange={e=>setParallelEx(b.key,si,e.target.value)} style={{flex:1,padding:"5px 10px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none"}}>
                       <option value="">🎲 Zufällig aus Bibliothek</option>
-                      {exercises.filter(e=>!b.cat||e.category===b.cat).map(e=><option key={e.id} value={e.id}>{e.title}</option>)}
+                      {exercises.sort((a,b)=>(CATS[a.category]?.label||"").localeCompare(CATS[b.category]?.label||"")).map(e=><option key={e.id} value={e.id}>{CATS[e.category]?.emoji||""} [{CATS[e.category]?.label||e.category}] {e.title}</option>)}
                     </select>
                   </div>
                 ))}
@@ -1502,7 +1588,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     </div>
   </div>);
 }
-function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,onSaveSession}) {
+function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,onSaveSession,onReplan}) {
   const gP=id=>players.find(p=>p.id===id);
   const gC=id=>coaches.find(c=>c.id===id);
   const gE=id=>exercises.find(e=>e.id===id);
@@ -1579,7 +1665,8 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
     {/* Actions */}
     <div style={{display:"flex",gap:8,justifyContent:"flex-end",paddingTop:14,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
       <Btn sm variant="danger" onClick={()=>{if(confirm("Training löschen?"))onDelete();}}><Trash2 size={13}/> Löschen</Btn>
-      <Btn sm variant="secondary" onClick={onEdit}><Edit2 size={13}/> Bearbeiten</Btn>
+      <Btn sm variant="secondary" onClick={onEdit}><Edit2 size={13}/> Felder</Btn>
+      {onReplan&&<Btn sm variant="secondary" onClick={onReplan}><RefreshCw size={13}/> Neu planen</Btn>}
       <Btn sm onClick={onClose}>Schließen</Btn>
     </div>
   </div>);
@@ -1634,20 +1721,23 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
       </div>)}
     {tab==="teams"&&<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:20}}><h2 style={{margin:"0 0 6px",fontSize:18,fontWeight:800}}>Schnelle Teambildung</h2><p style={{margin:"0 0 16px",color:C.muted,fontSize:14}}>Teams bilden ohne Training zu protokollieren.</p><Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={16}/> Teams zusammenstellen</Btn></div>}
     {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="setup"&&<Modal title="Training planen" onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} onClose={()=>setModal(null)} onPlanManual={setup=>setModal({type:"manual",setup})} onPlanKI={setup=>setModal({type:"ai",setup})}/></Modal>}
-    {modal?.type==="manual"&&<Modal title="📋 Manuell planen" onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} setup={modal.setup} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
-    {modal?.type==="ai"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
+    {modal?.type==="setup"&&<Modal title={modal.replaceId?"Training neu planen":"Training planen"} onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} initialSetup={modal.setup} onClose={()=>setModal(null)} onPlanManual={setup=>setModal({type:"manual",setup,replaceId:modal.replaceId})} onPlanKI={setup=>setModal({type:"ai",setup,replaceId:modal.replaceId})}/></Modal>}
+    {modal?.type==="manual"&&<Modal title={modal.replaceId?"📋 Neu planen":"📋 Manuell planen"} onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
+    {modal?.type==="ai"&&<Modal title={modal.replaceId?"🤖 Neu planen (KI)":"🤖 KI-Trainingsplan"} onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={teams=>{if(modal.data.session)onSaveSession({...modal.data.session,teams});setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession}/></Modal>}
+    {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession} onReplan={()=>{
+      const s=modal.data;
+      setModal({type:"setup",replaceId:s.id,setup:{kids:Number(s.participantCount)||players.filter(p=>p.active).length,coachCount:s.coachIds?.length||1,duration:s.duration||60,location:s.location==="Halle"?"indoor":"outdoor",date:s.date,playerIds:s.playerIds||[],coachIds:s.coachIds||[],focus:""}});
+    }}/></Modal>}
     {modal?.type==="exDetail"&&modal.data&&<Modal title="Übungsdetail" onClose={()=>setModal(null)}><div><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}><CatBadge cat={modal.data.category}/><Stars value={modal.data.rating} readonly/><span style={{fontSize:13,color:C.muted,marginLeft:"auto"}}>⏱ {modal.data.duration} Min</span></div>{modal.data.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.setup}</div></div>}{modal.data.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.description}</div></div>}{modal.data.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{modal.data.material.map(m=><span key={m} style={{padding:"3px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div>}{modal.data.notes&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {modal.data.notes}</div>}</div></Modal>}
   </div>);
 }
 
 // ── TRAINING SETUP MODAL ─────────────────────────────────────────
-function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose}) {
+function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose,initialSetup}) {
   const activeP=players.filter(p=>p.active);
-  const [setup,setSetup]=useState({kids:activeP.length||10,coachCount:1,duration:60,location:"outdoor",date:todayISO(),playerIds:[],coachIds:[],focus:""});
+  const [setup,setSetup]=useState({kids:activeP.length||10,coachCount:1,duration:60,location:"outdoor",date:todayISO(),playerIds:[],coachIds:[],focus:"",...(initialSetup||{})});
   const [showPlayers,setShowPlayers]=useState(false);
   const [showCoaches,setShowCoaches]=useState(false);
   const s=(k,v)=>setSetup(x=>({...x,[k]:v}));
