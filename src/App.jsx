@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "2.9.8";
+const APP_VERSION = "3.0.1";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -1237,11 +1237,12 @@ function SessionForm({session,players,coaches,exercises,onSave,onClose}) {
 
 // ── MANUAL TRAINING PLANNER ──────────────────────────────────────
 const BLOCKS = [
-  {key:"aufwaermen",  label:"Aufwärmen",        emoji:"🔥", cat:"aufwaermen",                defaultMin:10},
-  {key:"mittel1",     label:"Mittelblock 1",     emoji:"🎯", cat:"koordination",              defaultMin:15},
-  {key:"mittel2",     label:"Mittelblock 2",     emoji:"⚽", cat:"technik",                   defaultMin:12},
-  {key:"spielform",   label:"Spielform / Funino",emoji:"🏆", cat:"spielform",                 defaultMin:20},
-  {key:"abschluss",   label:"Abschluss",         emoji:"🌅", cat:"abschluss",                 defaultMin:5},
+  {key:"ankommen",    label:"Ankommen",          emoji:"🚪", cat:null,       defaultMin:10, fixedFree:true},
+  {key:"aufwaermen",  label:"Aufwärmen",          emoji:"🔥", cat:"aufwaermen",              defaultMin:10},
+  {key:"mittel1",     label:"Hauptblock 1",       emoji:"🎯", cat:"koordination",            defaultMin:15},
+  {key:"mittel2",     label:"Hauptblock 2",       emoji:"⚽", cat:"technik",                 defaultMin:12},
+  {key:"spielform",   label:"Spielform / Funino", emoji:"🏆", cat:"spielform",               defaultMin:20},
+  {key:"abschluss",   label:"Abschluss",          emoji:"🌅", cat:"abschluss",               defaultMin:5},
 ];
 
 function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,toast,setup}) {
@@ -1249,8 +1250,13 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
   const [kids,setKids]=useState(setup?.kids||activeCount||10);
   const [coaches,setCoaches]=useState(setup?.coachCount||1);
   const [totalMin,setTotalMin]=useState(setup?.duration||60);
-  const [blocks,setBlocks]=useState(BLOCKS.map(b=>({...b,active:b.key!=="mittel2",parallel:false,stations:2,pick:"random",exerciseId:null,minutes:b.defaultMin})));
+  const [blocks,setBlocks]=useState(BLOCKS.map(b=>({...b,active:b.key!=="mittel2",parallel:false,stations:2,parallelExercises:{},pick:"random",exerciseId:null,minutes:b.defaultMin})));
   const [plan,setPlan]=useState(null);
+  const [planTeams,setPlanTeams]=useState([]);
+  const [showTeamBuilder,setShowTeamBuilder]=useState(false);
+  const [tbNumTeams,setTbNumTeams]=useState(Math.max(2,Math.round((setup?.kids||kids||10)/3)));
+  const [tbMode,setTbMode]=useState("balanced");
+  const [tbSkill,setTbSkill]=useState({strong:0,weak:0});
 
   const setBlock=(key,field,val)=>setBlocks(bs=>bs.map(b=>b.key===key?{...b,[field]:val}:b));
   const activeBlocks=blocks.filter(b=>b.active);
@@ -1262,64 +1268,100 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     return pool.length?pool[Math.floor(Math.random()*pool.length)]:null;
   };
 
+  const setParallelEx=(blockKey,si,exId)=>setBlocks(bs=>bs.map(b=>b.key===blockKey?{...b,parallelExercises:{...b.parallelExercises,[si]:exId}}:b));
+
   const generate=()=>{
     const phases=activeBlocks.map(b=>{
+      if(b.fixedFree) return {block:b,exercise:null,stations:null,kids,minutes:b.minutes,isFree:true};
+
       let ex=null;
       if(b.pick==="random") ex=pickExercise(b.cat,null);
       else if(b.pick==="manual"&&b.exerciseId) ex=exercises.find(e=>e.id===b.exerciseId);
 
       const kidsPerStation=b.parallel?Math.floor(kids/b.stations):kids;
-      const stations=b.parallel?Array.from({length:b.stations},(_,i)=>({
-        label:`Station ${i+1}`,
-        exercise:pickExercise(b.cat, ex?.id)||ex,
-        kids:kidsPerStation,
-      })):null;
+      const stations=b.parallel?Array.from({length:b.stations},(_,i)=>{
+        // Use manually picked exercise for this station if set, else random
+        const manualId=b.parallelExercises?.[i];
+        const stEx=manualId?exercises.find(e=>e.id===manualId):(pickExercise(b.cat, ex?.id)||ex);
+        return {label:`Station ${i+1}`,exercise:stEx,kids:kidsPerStation,manualId};
+      }):null;
 
-      return {
-        block:b,
-        exercise:ex,
-        stations,
-        kids:b.parallel?`${kidsPerStation}/Station (${b.stations} Stationen parallel)`:kids,
-        minutes:b.minutes,
-      };
+      return {block:b,exercise:ex,stations,kids:b.parallel?`${kidsPerStation}/Station`:kids,minutes:b.minutes};
     });
-    setPlan({phases,kids,coaches,totalMin});
+    setPlan({phases,kids,coaches,totalMin,date:setup?.date||todayISO(),location:setup?.location||""});
   };
 
-  const phCol={aufwaermen:"#fff7ed",koordination:"#f5f3ff",technik:"#eff6ff",spielform:"#f0fdf4",abschluss:"#fdf2f8"};
+  const phCol={ankommen:"#f8fafc",aufwaermen:"#fff7ed",koordination:"#f5f3ff",technik:"#eff6ff",spielform:"#f0fdf4",abschluss:"#fdf2f8"};
+
+  const printPlan=()=>{
+    const css=`body{font-family:system-ui,sans-serif;padding:20px;max-width:800px;margin:0 auto;color:#111}h1{font-size:22px;margin:0 0 4px}h2{font-size:15px;margin:12px 0 6px;padding:6px 10px;border-radius:6px;background:#f1f5f9}h3{font-size:13px;margin:4px 0;color:#374151}.meta{font-size:13px;color:#6b7280;margin-bottom:16px}.phase{border:1.5px solid #e2e8f0;border-radius:8px;margin-bottom:10px;overflow:hidden}.phase-header{padding:8px 14px;font-weight:800;font-size:14px;display:flex;justify-content:space-between;align-items:center}.station{padding:8px 12px;border-top:1px solid #e2e8f0;font-size:13px}.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;background:#eff6ff;color:#1d4ed8;margin-left:6px}@media print{body{padding:10px}button{display:none}}`;
+    const rows=plan.phases.map(ph=>{
+      const bg={ankommen:"#f8fafc",aufwaermen:"#fff7ed",koordination:"#f5f3ff",technik:"#eff6ff",spielform:"#f0fdf4",abschluss:"#fdf2f8"}[ph.block.cat||ph.block.key]||"#f8fafc";
+      let body="";
+      if(ph.isFree){body=`<div style="padding:8px 14px;font-size:13px;color:#64748b">⚽ Kinder spielen frei — Trainer bauen parallel auf<br>🧑‍🏫 Trainer nutzen diese Zeit für Aufbau der nächsten Station</div>`;}
+      else if(ph.stations){
+        const rot=Math.floor(ph.minutes/2);
+        body=`<div style="padding:6px 14px 2px;font-size:12px;color:#7c3aed;font-weight:700">🔄 Rotation nach ${rot} Min — ${ph.block.stations} Gruppen wechseln</div>`;
+        body+=ph.stations.map((st,i)=>`<div class="station"><strong>${st.label} (${st.kids} Kinder):</strong> ${st.exercise?st.exercise.title:"–"}${st.exercise?.description?`<br><span style="color:#6b7280;font-size:12px">${st.exercise.description.slice(0,120)}${st.exercise.description.length>120?"…":""}</span>`:""}${st.exercise?.material?.length?`<br><span style="font-size:11px;color:#6b7280">📦 ${st.exercise.material.join(", ")}</span>`:""}</div>`).join("");
+      } else {
+        body=`<div style="padding:8px 14px;font-size:13px">${ph.exercise?`<strong>${ph.exercise.title}</strong>${ph.exercise.description?`<br><span style="color:#6b7280">${ph.exercise.description.slice(0,200)}${ph.exercise.description.length>200?"…":""}</span>`:""}${ph.exercise.material?.length?`<br><span style="font-size:11px;color:#6b7280">📦 ${ph.exercise.material.join(", ")}</span>`:""}`:`<span style="color:#6b7280;font-style:italic">Freie Übung / wird vor Ort bestimmt</span>`}</div>`;
+      }
+      return `<div class="phase"><div class="phase-header" style="background:${bg}">${ph.block.emoji} ${ph.block.label}<span style="font-size:12px;color:#64748b">⏱ ${ph.minutes} Min · 👥 ${ph.isFree?ph.kids:ph.kids} Kinder</span></div>${body}</div>`;
+    }).join("");
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Trainingsplan</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${plan.date||todayISO()} · ⏱ ${plan.totalMin} Min · 👥 ${plan.kids} Kinder · 🧑‍🏫 ${plan.coaches} Trainer${plan.location?" · 📍 "+plan.location:""}</div>${rows}<div style="margin-top:16px;font-size:11px;color:#94a3b8">Erstellt mit G-Jugend Coach App</div></body></html>`;
+    const w=window.open("","_blank");
+    if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),400);}
+  };
 
   if(plan) return(
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
         <h3 style={{margin:0,fontWeight:800,color:C.text}}>Trainingsplan</h3>
         <span style={{fontSize:13,color:C.muted}}>⏱ {plan.totalMin} Min · 👥 {plan.kids} Kinder · 🧑‍🏫 {plan.coaches} Trainer</span>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
         {plan.phases.map((ph,i)=>{
-          const bg=phCol[ph.block.cat]||"#f8fafc";
+          const bg=phCol[ph.block.cat||"ankommen"]||"#f8fafc";
+          const rotMin=Math.floor(ph.minutes/2);
           return(<div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
             <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{fontWeight:800,fontSize:14}}>{ph.block.emoji} {ph.block.label}</div>
-              <div style={{fontSize:12,color:C.muted,display:"flex",gap:10}}><span>⏱ {ph.minutes} Min</span><span>👥 {ph.kids}</span></div>
+              <div style={{fontSize:12,color:C.muted,display:"flex",gap:10}}><span>⏱ {ph.minutes} Min</span><span>👥 {ph.kids} Kinder</span></div>
             </div>
             <div style={{padding:"10px 14px"}}>
-              {ph.stations
+              {ph.isFree
                 ?<div>
-                  <div style={{fontSize:12,color:"#7c3aed",fontWeight:700,marginBottom:8}}>⚡ Parallelbetrieb – {ph.block.stations} Stationen gleichzeitig</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                    {ph.stations.map((st,j)=><div key={j} style={{padding:"8px 12px",background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`}}>
-                      <div style={{fontWeight:700,fontSize:13,color:C.primary,marginBottom:2}}>{st.label} · {st.kids} Kinder</div>
-                      {st.exercise?<div style={{fontSize:13,color:C.text}}>{st.exercise.title} <span style={{color:C.muted}}>·</span> <CatBadge cat={st.exercise.category} small/></div>:<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>Keine passende Übung in Bibliothek</div>}
-                      {st.exercise?.material?.length>0&&<div style={{fontSize:11,color:C.muted,marginTop:3}}>📦 {st.exercise.material.join(", ")}</div>}
+                  <div style={{fontSize:13,color:C.muted,marginBottom:6}}>⚽ Kinder spielen frei — kein Trainer-Input nötig.</div>
+                  <div style={{fontSize:12,color:"#7c3aed",background:"#faf5ff",borderRadius:6,padding:"6px 10px",border:"1px solid #e9d5ff"}}>🧑‍🏫 Trainer nutzen diese {ph.minutes} Min um die nächste Station aufzubauen.</div>
+                </div>
+                :ph.stations
+                ?<div>
+                  <div style={{fontSize:12,color:"#7c3aed",fontWeight:700,marginBottom:8}}>🔄 {ph.block.stations} Gruppen gleichzeitig — Rotation nach {rotMin} Min (Pfiff)</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {ph.stations.map((st,j)=><div key={j} style={{padding:"10px 12px",background:"#f8fafc",borderRadius:8,border:`1.5px solid ${C.border}`}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                        <span style={{fontWeight:800,fontSize:13,color:C.primary}}>📍 {st.label} · {st.kids} Kinder</span>
+                        {st.exercise&&<CatBadge cat={st.exercise.category} small/>}
+                      </div>
+                      {st.exercise
+                        ?<><div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:3}}>{st.exercise.title}</div>
+                          {st.exercise.setup&&<div style={{fontSize:12,color:C.muted,marginBottom:2}}>📐 {st.exercise.setup.slice(0,100)}{st.exercise.setup.length>100?"…":""}</div>}
+                          {st.exercise.description&&<div style={{fontSize:13,color:C.text,lineHeight:1.5,marginBottom:3}}>{st.exercise.description.slice(0,120)}{st.exercise.description.length>120?"…":""}</div>}
+                          {st.exercise.material?.length>0&&<div style={{fontSize:11,color:C.muted}}>📦 {st.exercise.material.join(", ")}</div>}</>
+                        :<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>Keine Übung in Bibliothek – eigene wählen</div>}
                     </div>)}
-                    <div style={{fontSize:12,color:"#7c3aed",fontStyle:"italic"}}>Kinder rotieren nach {Math.floor(ph.minutes/2)} Min oder spielen durch</div>
+                    <div style={{fontSize:12,background:"#fef9c3",borderRadius:6,padding:"6px 10px",border:"1px solid #fde047",color:"#92400e",fontWeight:600}}>
+                      ⏱ Nach {rotMin} Min: Pfiff → alle Gruppen rücken eine Station weiter (im Uhrzeigersinn)
+                    </div>
                   </div>
                 </div>
                 :<div>
-                  {ph.exercise?<><div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:4}}>{ph.exercise.title} <CatBadge cat={ph.exercise.category} small/></div>
-                    {ph.exercise.description&&<div style={{fontSize:13,color:C.muted,lineHeight:1.5,marginBottom:ph.exercise.material?.length?6:0}}>{ph.exercise.description.slice(0,150)}{ph.exercise.description.length>150?"…":""}</div>}
-                    {ph.exercise.material?.length>0&&<div style={{fontSize:12,color:C.muted}}>📦 {ph.exercise.material.join(", ")}</div>}</>
-                  :<div style={{fontSize:14,color:C.muted,fontStyle:"italic"}}>Keine passende Übung in der Bibliothek – eigene wählen oder ergänzen.</div>}
+                  {ph.exercise
+                    ?<><div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:4}}>{ph.exercise.title} <CatBadge cat={ph.exercise.category} small/></div>
+                      {ph.exercise.setup&&<div style={{fontSize:12,color:C.muted,background:"#f8fafc",padding:"5px 10px",borderRadius:6,marginBottom:6}}>📐 {ph.exercise.setup.slice(0,120)}</div>}
+                      {ph.exercise.description&&<div style={{fontSize:13,color:C.muted,lineHeight:1.5,marginBottom:ph.exercise.material?.length?6:0}}>{ph.exercise.description.slice(0,180)}{ph.exercise.description.length>180?"…":""}</div>}
+                      {ph.exercise.material?.length>0&&<div style={{fontSize:12,color:C.muted}}>📦 {ph.exercise.material.join(", ")}</div>}</>
+                    :<div style={{fontSize:14,color:C.muted,fontStyle:"italic"}}>Keine passende Übung in der Bibliothek – eigene wählen oder ergänzen.</div>}
                 </div>}
             </div>
           </div>);
@@ -1328,14 +1370,54 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
       {remaining!==0&&<div style={{padding:"8px 14px",borderRadius:8,background:remaining>0?"#f0fdf4":"#fef2f2",border:`1px solid ${remaining>0?"#86efac":"#fca5a5"}`,fontSize:13,color:remaining>0?"#166534":"#991b1b",marginBottom:12}}>
         {remaining>0?`⏰ ${remaining} Min Puffer übrig – ideal für Übergänge und Erklärungen`:`⚠️ ${Math.abs(remaining)} Min zu viel geplant – Blöcke kürzen`}
       </div>}
-      <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
-        <Btn onClick={()=>setPlan(null)} variant="secondary"><RefreshCw size={14}/> Neu generieren</Btn>
+
+      {/* ── Inline Team Builder ── */}
+      <div style={{marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:showTeamBuilder?12:0}}>
+          <div style={{fontWeight:700,fontSize:14,color:C.text}}>👥 Teams für dieses Training</div>
+          <button onClick={()=>setShowTeamBuilder(v=>!v)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${showTeamBuilder?C.primary:C.border}`,background:showTeamBuilder?C.accentL:"white",color:showTeamBuilder?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>
+            {planTeams.length>0?`✅ ${planTeams.length} Teams erstellt ${showTeamBuilder?"▲":"▼"}`:showTeamBuilder?"▲ Einklappen":"+ Teams erstellen"}
+          </button>
+        </div>
+        {showTeamBuilder&&<div style={{background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+            <div><label style={{display:"block",fontSize:11,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Anzahl Teams</label><Stepper value={tbNumTeams} onChange={setTbNumTeams} min={2} max={12}/><div style={{fontSize:11,color:C.muted,marginTop:3}}>≈ {Math.round(plan.kids/tbNumTeams)} Kinder/Team</div></div>
+            <div><label style={{display:"block",fontSize:11,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {[["balanced","⚖️ Ausgeglichen"],["random","🎲 Zufällig"],["skill","📊 Stärke-Gruppen"],["mixed","🎨 Durchmischt"]].map(([k,l])=><button key={k} onClick={()=>setTbMode(k)} style={{padding:"5px 8px",borderRadius:7,border:`1.5px solid ${tbMode===k?C.primary:C.border}`,background:tbMode===k?C.accentL:"white",color:tbMode===k?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit",textAlign:"left"}}>{l}</button>)}
+              </div>
+            </div>
+          </div>
+          {tbMode==="skill"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+            {[["strong","💪 Stark","#dc2626","#fee2e2"],["weak","🌱 Schwach","#16a34a","#dcfce7"]].map(([k,l,col,bg])=><div key={k} style={{textAlign:"center",padding:"8px",borderRadius:8,background:bg,border:`1.5px solid ${col}33`}}><div style={{fontSize:11,fontWeight:700,color:col,marginBottom:4}}>{l}</div><Stepper value={tbSkill[k]||0} onChange={v=>setTbSkill(d=>({...d,[k]:Math.min(v,tbNumTeams-1)}))} min={0} max={tbNumTeams-1}/></div>)}
+            <div style={{textAlign:"center",padding:"8px",borderRadius:8,background:"#fef3c7",border:"1.5px solid #fde68a33"}}><div style={{fontSize:11,fontWeight:700,color:"#d97706",marginBottom:4}}>➖ Gemischt</div><div style={{fontWeight:900,fontSize:22,color:"#d97706"}}>{tbNumTeams-(tbSkill.strong||0)-(tbSkill.weak||0)}</div></div>
+          </div>}
+          <div style={{display:"flex",gap:8,marginBottom:planTeams.length?12:0}}>
+            <Btn sm onClick={()=>{const generated=buildTeams(players.filter(p=>p.active),tbNumTeams,tbMode,tbSkill);setPlanTeams(generated);}} style={{flex:1,justifyContent:"center"}}><Shuffle size={13}/> Teams generieren</Btn>
+            {planTeams.length>0&&<Btn sm variant="secondary" onClick={()=>setPlanTeams([])}>✕ Löschen</Btn>}
+          </div>
+          {planTeams.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {planTeams.map((t,i)=><div key={t.id} style={{padding:"8px 12px",borderRadius:8,background:"white",border:`1.5px solid ${TCOLORS[i%TCOLORS.length]}55`}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:TCOLORS[i%TCOLORS.length]}}/>
+                <input value={t.name} onChange={e=>setPlanTeams(ts=>ts.map((x,j)=>j===i?{...x,name:e.target.value}:x))} style={{fontWeight:800,fontSize:13,border:"none",outline:"none",background:"transparent",color:C.text,flex:1,fontFamily:"inherit"}}/>
+                <span style={{fontSize:11,color:C.muted}}>{t.players.length} Kinder · Ø {t.players.length?(t.players.reduce((s,p)=>s+p.strength,0)/t.players.length).toFixed(1):"-"}</span>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3}}>{t.players.map(p=><span key={p.id} style={{fontSize:11,padding:"1px 7px",borderRadius:20,background:STR[p.strength]?.light||"#f1f5f9",color:STR[p.strength]?.color||C.muted,fontWeight:600}}>{STR[p.strength]?.emoji} {p.name}</span>)}</div>
+            </div>)}
+          </div>}
+        </div>}
+      </div>
+
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+        <Btn onClick={()=>setPlan(null)} variant="secondary"><RefreshCw size={14}/> Neu</Btn>
+        <Btn onClick={printPlan} variant="secondary">🖨️ PDF / Drucken</Btn>
         <Btn onClick={()=>{
           const exIds=[...new Set(plan.phases.flatMap(ph=>ph.stations?ph.stations.map(s=>s.exercise?.id).filter(Boolean):[ph.exercise?.id].filter(Boolean)))];
-          onSaveSession({id:uid(),createdAt:now(),date:todayISO(),duration:plan.totalMin,location:"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:[],notes:`Automatisch geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
+          onSaveSession({id:uid(),createdAt:now(),date:plan.date||todayISO(),duration:plan.totalMin,location:plan.location||"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:planTeams,notes:`Manuell geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
           toast("Training gespeichert ✓");
           onClose();
-        }}><CalendarDays size={14}/> Als Training speichern</Btn>
+        }}><CalendarDays size={14}/> Speichern</Btn>
       </div>
     </div>
   );
@@ -1365,26 +1447,45 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
             <span style={{fontSize:12,color:C.muted}}>Min</span>
           </div>
         </div>
-        {b.active&&<div style={{padding:"10px 14px",display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",borderTop:`1px solid ${C.border}`}}>
-          <div style={{display:"flex",gap:6}}>
-            {[["random","🎲 Zufällig"],["manual","📋 Manuell"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setBlock(b.key,"pick",v)} style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${b.pick===v?C.primary:C.border}`,background:b.pick===v?C.accentL:"white",color:b.pick===v?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>{l}</button>
-            ))}
-          </div>
-          {b.pick==="manual"&&<select value={b.exerciseId||""} onChange={e=>setBlock(b.key,"exerciseId",e.target.value)} style={{flex:1,minWidth:140,padding:"5px 10px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none"}}>
-            <option value="">-- Übung wählen --</option>
-            {exercises.filter(e=>e.category===b.cat).map(e=><option key={e.id} value={e.id}>{e.title}</option>)}
-          </select>}
-          <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
-            <input type="checkbox" id={`par${b.key}`} checked={b.parallel} onChange={e=>setBlock(b.key,"parallel",e.target.checked)} style={{width:15,height:15}}/>
-            <label htmlFor={`par${b.key}`} style={{fontSize:12,fontWeight:700,color:C.muted,cursor:"pointer"}}>Parallel</label>
-            {b.parallel&&<><span style={{fontSize:12,color:C.muted}}>Stationen:</span>
-            <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:6,overflow:"hidden",height:28}}>
-              <button onClick={()=>setBlock(b.key,"stations",Math.max(2,b.stations-1))} style={{width:22,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:12,color:C.muted}}>−</button>
-              <div style={{width:28,textAlign:"center",fontWeight:800,fontSize:13,color:C.text}}>{b.stations}</div>
-              <button onClick={()=>setBlock(b.key,"stations",Math.min(6,b.stations+1))} style={{width:22,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:12,color:C.text}}>+</button>
-            </div></>}
-          </div>
+        {b.active&&<div style={{padding:"10px 14px",borderTop:`1px solid ${C.border}`}}>
+          {b.fixedFree
+            ?<div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>⚽ Freies Spiel — Trainer nutzen diese Zeit zum Aufbauen. Keine Übungsauswahl nötig.</div>
+            :<div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:b.parallel?10:0}}>
+                <div style={{display:"flex",gap:6}}>
+                  {[["random","🎲 Zufällig"],["manual","📋 Manuell"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setBlock(b.key,"pick",v)} style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${b.pick===v?C.primary:C.border}`,background:b.pick===v?C.accentL:"white",color:b.pick===v?C.primary:C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>{l}</button>
+                  ))}
+                </div>
+                {b.pick==="manual"&&!b.parallel&&<select value={b.exerciseId||""} onChange={e=>setBlock(b.key,"exerciseId",e.target.value)} style={{flex:1,minWidth:140,padding:"5px 10px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none"}}>
+                  <option value="">-- Übung wählen --</option>
+                  {exercises.filter(e=>!b.cat||e.category===b.cat).map(e=><option key={e.id} value={e.id}>{e.title}</option>)}
+                </select>}
+                <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:"auto"}}>
+                  <input type="checkbox" id={`par${b.key}`} checked={b.parallel} onChange={e=>setBlock(b.key,"parallel",e.target.checked)} style={{width:15,height:15}}/>
+                  <label htmlFor={`par${b.key}`} style={{fontSize:12,fontWeight:700,color:C.muted,cursor:"pointer"}}>Parallel</label>
+                  {b.parallel&&<><span style={{fontSize:12,color:C.muted}}>Gruppen:</span>
+                  <div style={{display:"flex",alignItems:"center",border:`1.5px solid ${C.border}`,borderRadius:6,overflow:"hidden",height:28}}>
+                    <button onClick={()=>setBlock(b.key,"stations",Math.max(2,b.stations-1))} style={{width:22,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:12,color:C.muted}}>−</button>
+                    <div style={{width:28,textAlign:"center",fontWeight:800,fontSize:13,color:C.text}}>{b.stations}</div>
+                    <button onClick={()=>setBlock(b.key,"stations",Math.min(6,b.stations+1))} style={{width:22,height:"100%",border:"none",cursor:"pointer",background:"#f1f5f9",fontSize:12,color:C.text}}>+</button>
+                  </div></>}
+                </div>
+              </div>
+              {b.parallel&&<div style={{display:"flex",flexDirection:"column",gap:6,paddingTop:8,borderTop:`1px dashed ${C.border}`}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Übung pro Gruppe (leer = zufällig aus Bibliothek)</div>
+                {Array.from({length:b.stations},(_,si)=>(
+                  <div key={si} style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:12,fontWeight:700,color:C.primary,minWidth:60}}>Gruppe {si+1}</span>
+                    <select value={b.parallelExercises?.[si]||""} onChange={e=>setParallelEx(b.key,si,e.target.value)} style={{flex:1,padding:"5px 10px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none"}}>
+                      <option value="">🎲 Zufällig aus Bibliothek</option>
+                      {exercises.filter(e=>!b.cat||e.category===b.cat).map(e=><option key={e.id} value={e.id}>{e.title}</option>)}
+                    </select>
+                  </div>
+                ))}
+                <div style={{fontSize:11,color:"#7c3aed",fontStyle:"italic"}}>↔ Rotation nach {Math.floor(b.minutes/2)} Min</div>
+              </div>}
+            </div>}
         </div>}
       </div>)}
     </div>
