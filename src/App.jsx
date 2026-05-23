@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "3.5.0";
+const APP_VERSION = "3.6.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -974,8 +974,7 @@ function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
   const [filterStr,setFilterStr]=useState("");   // ""=all|"1"|"2"|"3"|"4"
   const [filterActive,setFilterActive]=useState("active"); // active|inactive|all
   const [showFilters,setShowFilters]=useState(false);
-  const allSel=selPlayers.length>0&&players.every(p=>selPlayers.includes(p.id));
-  const toggleAll=()=>setSelPlayers(allSel?[]:players.map(p=>p.id));
+  // toggleAll computed after filtered (see below)
 
   const filtered=players
     .filter(p=>{
@@ -990,7 +989,6 @@ function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
       if(sortBy==="strength") return b.strength-a.strength;
       if(sortBy==="birthday"){
         const da=getBdInfo(a),db=getBdInfo(b);
-        // Sort by upcoming birthday (diff ascending, negative last)
         const da2=da?((da.diff<0&&da.diff>=-7)?da.diff:da.diff<0?da.diff+365:da.diff):999;
         const db2=db?((db.diff<0&&db.diff>=-7)?db.diff:db.diff<0?db.diff+365:db.diff):999;
         return da2-db2;
@@ -998,6 +996,11 @@ function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
       if(sortBy==="jersey"){const ja=Number(a.jersey)||999,jb=Number(b.jersey)||999;return ja-jb;}
       return 0;
     });
+  const filteredIds=filtered.map(p=>p.id);
+  const allSel=filteredIds.length>0&&filteredIds.every(id=>selPlayers.includes(id));
+  const toggleAll=()=>setSelPlayers(allSel
+    ?selPlayers.filter(id=>!filteredIds.includes(id))
+    :[...new Set([...selPlayers,...filteredIds])]);
 
   const chip=(label,active,onClick,col)=>(
     <button onClick={onClick} style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${active?(col||C.primary):C.border}`,background:active?(col?col+"22":C.accentL):"white",color:active?(col||C.primary):C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",whiteSpace:"nowrap"}}>{label}</button>
@@ -1086,7 +1089,56 @@ function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
   </div>);
 }
 
-function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDeleteCoach,toast,onAddToTraining}) {
+
+function AddToSessionModal({playerIds,sessions,players,onSaveSession,onClose,toast}) {
+  const [selSess,setSelSess]=useState(null);
+  const newIds=playerIds;
+
+  const doAdd=(mode)=>{
+    if(!selSess)return;
+    const s=sessions.find(x=>x.id===selSess);
+    if(!s)return;
+    let updated;
+    if(mode==="replace") updated={...s,playerIds:newIds,participantCount:String(newIds.length),updatedAt:now()};
+    else updated={...s,playerIds:[...new Set([...(s.playerIds||[]),...newIds])],participantCount:String(new Set([...(s.playerIds||[]),...newIds]).size),updatedAt:now()};
+    onSaveSession(updated);
+    toast(mode==="replace"?"Spieler ersetzt ✓":"Spieler hinzugefügt ✓");
+    onClose();
+  };
+
+  const sorted=[...sessions].sort((a,b)=>b.date?.localeCompare(a.date||"")||0);
+  const getName=id=>players.find(p=>p.id===id)?.name||"?";
+
+  const sel=selSess?sessions.find(s=>s.id===selSess):null;
+  const existing=sel?.playerIds||[];
+  const onlyInNew=newIds.filter(id=>!existing.includes(id));
+  const onlyInExist=existing.filter(id=>!newIds.includes(id));
+  const inBoth=newIds.filter(id=>existing.includes(id));
+
+  return(<div>
+    <div style={{fontSize:13,color:C.muted,marginBottom:12}}>Wähle ein Training, zu dem {newIds.length} Spieler hinzugefügt werden sollen.</div>
+    <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:200,overflowY:"auto",marginBottom:16}}>
+      {sorted.map(s=><button key={s.id} onClick={()=>setSelSess(s.id===selSess?null:s.id)} style={{padding:"10px 14px",borderRadius:8,border:`2px solid ${s.id===selSess?C.primary:C.border}`,background:s.id===selSess?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>
+        <div style={{fontWeight:700,fontSize:14,color:C.text}}>{new Date(s.date).toLocaleDateString("de-DE")}</div>
+        <div style={{fontSize:12,color:C.muted}}>⏱ {s.duration} Min · 👥 {s.participantCount||0} Kinder · {s.exerciseIds?.length||0} Übungen</div>
+      </button>)}
+    </div>
+    {sel&&existing.length>0&&<div style={{marginBottom:16,background:"#f8fafc",borderRadius:10,border:`1px solid ${C.border}`,padding:"12px 14px"}}>
+      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>Unterschiede</div>
+      {inBoth.length>0&&<div style={{marginBottom:6}}><span style={{fontSize:11,fontWeight:700,color:"#16a34a"}}>✓ Bereits dabei ({inBoth.length}):</span><div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:3}}>{inBoth.map(id=><span key={id} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:"#dcfce7",color:"#16a34a"}}>{getName(id)}</span>)}</div></div>}
+      {onlyInNew.length>0&&<div style={{marginBottom:6}}><span style={{fontSize:11,fontWeight:700,color:C.primary}}>+ Neu hinzufügen ({onlyInNew.length}):</span><div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:3}}>{onlyInNew.map(id=><span key={id} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:C.accentL,color:C.primary}}>{getName(id)}</span>)}</div></div>}
+      {onlyInExist.length>0&&<div><span style={{fontSize:11,fontWeight:700,color:"#dc2626"}}>✕ Nur im Training ({onlyInExist.length}):</span><div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:3}}>{onlyInExist.map(id=><span key={id} style={{fontSize:11,padding:"2px 7px",borderRadius:20,background:"#fee2e2",color:"#dc2626"}}>{getName(id)}</span>)}</div></div>}
+    </div>}
+    {sel&&<div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+      <Btn sm variant="secondary" onClick={onClose}>Abbrechen</Btn>
+      {onlyInNew.length>0&&<Btn sm variant="secondary" onClick={()=>doAdd("merge")}>+ {onlyInNew.length} hinzufügen</Btn>}
+      <Btn sm onClick={()=>doAdd("replace")} style={{background:"#dc2626"}}>Ersetzen ({newIds.length})</Btn>
+    </div>}
+    {!sel&&<div style={{display:"flex",justifyContent:"flex-end"}}><Btn sm variant="secondary" onClick={onClose}>Abbrechen</Btn></div>}
+  </div>);
+}
+
+function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeletePlayer,onSaveCoach,onDeleteCoach,toast,onAddToTraining}) {
   const [tab,setTab]=useState("players");
   const [modal,setModal]=useState(null);
   const [del,setDel]=useState(null);
@@ -1138,7 +1190,8 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
         <button onClick={()=>{setSelPlayers([]);setSelCoaches([]);}} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:13,fontFamily:"inherit",fontWeight:700}}>✕ Leeren</button>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <Btn sm onClick={()=>{const selectedP=players.filter(p=>selPlayers.includes(p.id));const selectedC=coaches.filter(c=>selCoaches.includes(c.id));onAddToTraining?.({playerIds:selPlayers,coachIds:selCoaches,kids:selPlayers.length,coachCount:selectedC.length||1});setSelPlayers([]);setSelCoaches([]);}}><CalendarDays size={13}/> Training planen</Btn>
+        <Btn sm onClick={()=>{const selectedC=coaches.filter(c=>selCoaches.includes(c.id));onAddToTraining?.({playerIds:selPlayers,coachIds:selCoaches,kids:selPlayers.length,coachCount:selectedC.length||1});}}><CalendarDays size={13}/> Training planen</Btn>
+        <Btn sm variant="secondary" onClick={()=>setModal({type:"addToSession",playerIds:selPlayers})}>+ Zu Training</Btn>
         <Btn sm variant="secondary" onClick={()=>setModal({type:"teamBuilder",players:players.filter(p=>selPlayers.includes(p.id))})}><Shuffle size={13}/> Teams bilden</Btn>
       </div>
     </div>}
@@ -1200,6 +1253,7 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
     {modal?.type==="pf"&&<Modal title={modal.data?"Spieler bearbeiten":"Neuer Spieler"} onClose={()=>setModal(null)}><PlayerForm player={modal.data} onSave={(p,andAdd)=>{onSavePlayer(p);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="cf"&&<Modal title={modal.data?"Trainer bearbeiten":"Neuer Trainer"} onClose={()=>setModal(null)}><CoachForm coach={modal.data} onSave={(c,andAdd)=>{onSaveCoach(c);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="teamBuilder"&&<Modal title="Teams bilden" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.players||players.filter(p=>p.active)} onSaveTeams={teams=>{toast(`${teams.length} Teams erstellt`);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="addToSession"&&<Modal title="Zu Training hinzufügen" onClose={()=>setModal(null)} wide><AddToSessionModal playerIds={modal.playerIds} sessions={sessions||[]} players={players} onSaveSession={onSaveSession} onClose={()=>setModal(null)} toast={toast}/></Modal>}
   </div>);
 }
 
@@ -1923,9 +1977,10 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
 
 // ── TRAINING SETUP MODAL ─────────────────────────────────────────
 function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose,initialSetup}) {
-  const activeP=players.filter(p=>p.active);
+  const activeP=[...players.filter(p=>p.active)].sort((a,b)=>a.name.localeCompare(b.name,"de"));
   const [setup,setSetup]=useState({kids:activeP.length||10,coachCount:1,duration:60,location:"outdoor",date:todayISO(),playerIds:[],coachIds:[],focus:"",...(initialSetup||{})});
-  const [showPlayers,setShowPlayers]=useState(false);
+  const hasPreselect=(initialSetup?.playerIds||[]).length>0;
+  const [showPlayers,setShowPlayers]=useState(hasPreselect);
   const [showCoaches,setShowCoaches]=useState(false);
   const s=(k,v)=>setSetup(x=>({...x,[k]:v}));
   const togP=id=>s("playerIds",setup.playerIds.includes(id)?setup.playerIds.filter(x=>x!==id):[...setup.playerIds,id]);
@@ -2577,7 +2632,7 @@ export default function App() {
     <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length}}/>
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{setExercises(prev=>prev.filter(e=>e.id!==id));toast("Übung gelöscht");}} apiKey={apiKey} toast={toast}/>}
-      {page==="team"     &&<TeamPage     players={players} coaches={coaches} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPage("training");setTimeout(()=>window._openTrainingSetup?.({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1}),50);}}/>}
+      {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPage("training");setTimeout(()=>window._openTrainingSetup?.({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1}),50);}}/>}
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}} coaches={coaches}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
