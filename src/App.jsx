@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "3.2.0";
+const APP_VERSION = "3.3.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -867,7 +867,7 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
 }
 
 // ── PLAYER FORM ───────────────────────────────────────────────────
-const EMPTY_PLAYER = {name:"",birthYear:2019,strength:1,active:true,jersey:"",notes:"",vereinsmitglied:false,spielerpass:false,contacts:[]};
+const EMPTY_PLAYER = {name:"",birthYear:2019,birthDate:"",strength:1,active:true,jersey:"",notes:"",vereinsmitglied:false,spielerpass:false,contacts:[]};
 const EMPTY_CONTACT = {name:"",relation:"Mutter",phone:"",email:"",address:""};
 const RELATIONS = ["Mutter","Vater","Elternteil","Großelternteil","Geschwister","Sonstiges"];
 
@@ -907,7 +907,11 @@ function PlayerForm({player,onSave,onClose}) {
   };
   return(<div>
     <Inp label="Name *" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="Vorname"/>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}><Inp label="Jahrgang" type="number" value={form.birthYear} onChange={e=>set("birthYear",Number(e.target.value))} style={{marginBottom:0}}/><Inp label="Trikot #" value={form.jersey} onChange={e=>set("jersey",e.target.value)} placeholder="z.B. 7" style={{marginBottom:0}}/></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+      <Inp label="Jahrgang" type="number" value={form.birthYear} onChange={e=>set("birthYear",Number(e.target.value))} style={{marginBottom:0}}/>
+      <Inp label="Trikot #" value={form.jersey} onChange={e=>set("jersey",e.target.value)} placeholder="z.B. 7" style={{marginBottom:0}}/>
+    </div>
+    <Inp label="Geburtstag" type="date" value={form.birthDate||""} onChange={e=>{const d=e.target.value;set("birthDate",d);if(d)set("birthYear",Number(d.slice(0,4)));}} placeholder="TT.MM.JJJJ"/>
     <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Stärke</label><div style={{display:"flex",flexDirection:"column",gap:8}}>{[1,2,3,4].map(n=>{const s=STR[n];return(<button key={n} onClick={()=>set("strength",n)} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"10px 14px",borderRadius:10,border:`2px solid ${form.strength===n?s.color:C.border}`,background:form.strength===n?s.light:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><span style={{fontSize:20,lineHeight:1}}>{s.emoji}</span><div><div style={{fontWeight:700,fontSize:14,color:form.strength===n?s.color:C.text}}>{s.label}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{s.desc}</div></div></button>);})}</div></div>
     <div style={{display:"flex",gap:16,marginBottom:14,flexWrap:"wrap"}}>
       <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer"}}><input type="checkbox" checked={form.active} onChange={e=>set("active",e.target.checked)} style={{width:16,height:16}}/><span style={{fontSize:14,fontWeight:600,color:C.text}}>Aktiv</span></label>
@@ -2321,6 +2325,71 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
 }
 
 // ── NAV ───────────────────────────────────────────────────────────
+// ── BIRTHDAY HELPERS ──────────────────────────────────────────────
+function getBirthdayInfo(players) {
+  const today = new Date();
+  const todayMMDD = `${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
+  const results = [];
+  for (const p of players) {
+    if (!p.birthDate) continue;
+    const [,mm,dd] = p.birthDate.split("-"); // YYYY-MM-DD
+    const mmdd = `${mm}-${dd}`;
+    // Days from today (negative = past, 0 = today, positive = future)
+    const bDay = new Date(today.getFullYear(), Number(mm)-1, Number(dd));
+    let diff = Math.round((bDay - today) / 86400000);
+    // If birthday already passed this year, check if it was in last 7 days
+    if (diff < -7) { bDay.setFullYear(today.getFullYear()+1); diff = Math.round((bDay - today) / 86400000); }
+    if (diff >= -7 && diff <= 14) {
+      const age = today.getFullYear() - Number(p.birthDate.slice(0,4)) + (diff < 0 ? 0 : -1);
+      results.push({player:p, diff, age: diff <= 0 ? age+1 : age, mmdd});
+    }
+  }
+  return results.sort((a,b)=>a.diff-b.diff);
+}
+
+function BirthdayBanner({players}) {
+  const infos = getBirthdayInfo(players.filter(p=>p.active!==false));
+  if (!infos.length) return null;
+  const [open,setOpen] = useState(true);
+  if (!open) return (
+    <div onClick={()=>setOpen(true)} style={{background:"#fef9c3",borderRadius:10,padding:"6px 14px",margin:"0 0 12px",border:"1px solid #fde047",cursor:"pointer",display:"flex",alignItems:"center",gap:8,fontSize:13,color:"#854d0e",fontWeight:700}}>
+      🎂 {infos.length} Geburtstag{infos.length>1?"e":""} in den nächsten 7 Tagen <span style={{marginLeft:"auto",color:C.muted}}>▼</span>
+    </div>
+  );
+  return (
+    <div style={{background:"#fef9c3",borderRadius:10,padding:"12px 14px",margin:"0 0 14px",border:"1.5px solid #fde047"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+        <span style={{fontWeight:800,fontSize:14,color:"#854d0e"}}>🎂 Geburtstage</span>
+        <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",cursor:"pointer",color:"#a16207",fontSize:16,lineHeight:1}}>▲</button>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {infos.map(({player:p,diff,age})=>{
+          const isToday=diff===0;
+          const wasPast=diff<0;
+          const label=isToday?"🎉 Heute!"
+            :diff===1?"Morgen"
+            :diff===-1?"Gestern"
+            :wasPast?`Vor ${Math.abs(diff)} Tagen`
+            :`In ${diff} Tagen`;
+          const col=isToday?"#15803d":wasPast?"#6b7280":"#854d0e";
+          const bg=isToday?"#dcfce7":wasPast?"#f1f5f9":"#fffbeb";
+          return(
+            <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:bg,border:`1px solid ${isToday?"#86efac":wasPast?"#e2e8f0":"#fde047"}`}}>
+              <span style={{fontSize:20}}>{isToday?"🎉":"🎂"}</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:14,color:C.text}}>{p.name} <span style={{fontSize:12,fontWeight:400,color:C.muted}}>wird {age}</span></div>
+                <div style={{fontSize:12,color:C.muted}}>{p.birthDate?.slice(5).split("-").reverse().join(".")}</div>
+              </div>
+              <span style={{fontSize:12,fontWeight:700,color:col,padding:"2px 8px",borderRadius:20,background:col+"22"}}>{label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 function Nav({page,setPage,counts}) {
   const items=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
   return(<>
