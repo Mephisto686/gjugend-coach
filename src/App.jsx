@@ -6,7 +6,7 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 
-const APP_VERSION = "3.3.0";
+const APP_VERSION = "3.5.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -953,6 +953,139 @@ function CoachForm({coach,onSave,onClose}) {
 }
 
 // ── TEAM PAGE ─────────────────────────────────────────────────────
+function getBdInfo(p) {
+  if(!p.birthDate) return p.birthYear?{label:String(p.birthYear),isToday:false,wasPast:false,isSoon:false,date:String(p.birthYear),diff:999}:null;
+  const today=new Date(),parts=p.birthDate.split("-");
+  const mm=Number(parts[1]),dd=Number(parts[2]);
+  const bDay=new Date(today.getFullYear(),mm-1,dd);
+  let diff=Math.round((bDay-today)/86400000);
+  if(diff<-7){bDay.setFullYear(today.getFullYear()+1);diff=Math.round((bDay-today)/86400000);}
+  const age=today.getFullYear()-Number(parts[0])+(diff<0?0:-1);
+  const isToday=diff===0,wasPast=diff<0&&diff>=-7,isSoon=diff>0&&diff<=7;
+  const pad=n=>String(n).padStart(2,"0");
+  return{diff,age:diff<=0?age+1:age,isToday,wasPast,isSoon,
+    label:isToday?"🎉 Heute!":diff===1?"Morgen":diff===-1?"Gestern":wasPast?`vor ${Math.abs(diff)}d`:isSoon?`in ${diff}d`:`${pad(dd)}.${pad(mm)}.`,
+    date:`${pad(dd)}.${pad(mm)}.${parts[0]}`};
+}
+
+function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
+  const [search,setSearch]=useState("");
+  const [sortBy,setSortBy]=useState("name");     // name|strength|birthday|jersey
+  const [filterStr,setFilterStr]=useState("");   // ""=all|"1"|"2"|"3"|"4"
+  const [filterActive,setFilterActive]=useState("active"); // active|inactive|all
+  const [showFilters,setShowFilters]=useState(false);
+  const allSel=selPlayers.length>0&&players.every(p=>selPlayers.includes(p.id));
+  const toggleAll=()=>setSelPlayers(allSel?[]:players.map(p=>p.id));
+
+  const filtered=players
+    .filter(p=>{
+      if(filterActive==="active"&&!p.active)return false;
+      if(filterActive==="inactive"&&p.active)return false;
+      if(filterStr&&String(p.strength)!==filterStr)return false;
+      if(search){const q=search.toLowerCase();if(!p.name.toLowerCase().includes(q))return false;}
+      return true;
+    })
+    .sort((a,b)=>{
+      if(sortBy==="name") return a.name.localeCompare(b.name,"de");
+      if(sortBy==="strength") return b.strength-a.strength;
+      if(sortBy==="birthday"){
+        const da=getBdInfo(a),db=getBdInfo(b);
+        // Sort by upcoming birthday (diff ascending, negative last)
+        const da2=da?((da.diff<0&&da.diff>=-7)?da.diff:da.diff<0?da.diff+365:da.diff):999;
+        const db2=db?((db.diff<0&&db.diff>=-7)?db.diff:db.diff<0?db.diff+365:db.diff):999;
+        return da2-db2;
+      }
+      if(sortBy==="jersey"){const ja=Number(a.jersey)||999,jb=Number(b.jersey)||999;return ja-jb;}
+      return 0;
+    });
+
+  const chip=(label,active,onClick,col)=>(
+    <button onClick={onClick} style={{padding:"4px 12px",borderRadius:20,border:`1.5px solid ${active?(col||C.primary):C.border}`,background:active?(col?col+"22":C.accentL):"white",color:active?(col||C.primary):C.muted,cursor:"pointer",fontSize:12,fontWeight:700,fontFamily:"inherit",whiteSpace:"nowrap"}}>{label}</button>
+  );
+
+  return(<div>
+    {/* Search + filter toggle */}
+    <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
+      <div style={{flex:1,position:"relative"}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Suchen..." style={{width:"100%",padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+        {search&&<button onClick={()=>setSearch("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:16}}>✕</button>}
+      </div>
+      <button onClick={()=>setShowFilters(v=>!v)} style={{padding:"8px 14px",borderRadius:8,border:`1.5px solid ${showFilters?C.primary:C.border}`,background:showFilters?C.accentL:"white",color:showFilters?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",whiteSpace:"nowrap"}}>
+        ⚙️ Filter{(filterStr||filterActive!=="active"||sortBy!=="name")?` ●`:""}
+      </button>
+    </div>
+
+    {showFilters&&<div style={{background:"#f8fafc",borderRadius:10,border:`1px solid ${C.border}`,padding:"12px 14px",marginBottom:12}}>
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Sortieren</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {[["name","A–Z"],["strength","Stärke"],["birthday","Geburtstag"],["jersey","Trikot #"]].map(([k,l])=>chip(l,sortBy===k,()=>setSortBy(k)))}
+        </div>
+      </div>
+      <div style={{marginBottom:10}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Status</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {[["active","Aktiv"],["inactive","Inaktiv"],["all","Alle"]].map(([k,l])=>chip(l,filterActive===k,()=>setFilterActive(k)))}
+        </div>
+      </div>
+      <div>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Stärke</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {chip("Alle",!filterStr,()=>setFilterStr(""))}
+          {[4,3,2,1].map(s=>chip(`${STR[s].emoji} ${STR[s].label}`,filterStr===String(s),()=>setFilterStr(filterStr===String(s)?"":String(s)),STR[s].color))}
+        </div>
+      </div>
+    </div>}
+
+    {/* Select-all + count */}
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,padding:"6px 2px"}}>
+      <button onClick={toggleAll} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:allSel?C.primary:C.muted,fontFamily:"inherit",padding:0}}>
+        {allSel?<CheckSquare size={16}/>:<Square size={16}/>}
+        <span style={{fontSize:12,fontWeight:700}}>{selPlayers.length>0?`${selPlayers.length} ausgewählt`:"Alle auswählen"}</span>
+      </button>
+      <span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>{filtered.length} Spieler</span>
+      {selPlayers.length>0&&<button onClick={()=>setSelPlayers([])} style={{fontSize:12,color:"#ef4444",background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>✕ Leeren</button>}
+    </div>
+
+    {/* Player rows */}
+    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+      {filtered.map(p=>{
+        const isSel=selPlayers.includes(p.id);
+        const bd=getBdInfo(p);
+        const rowBg=bd?.isToday?"#dcfce7":bd?.wasPast?"#fef9c3":isSel?C.accentL:"white";
+        const borderL=`4px solid ${bd?.isToday?"#22c55e":bd?.wasPast?"#fde047":isSel?C.primary:STR[p.strength]?.color||C.border}`;
+        return(<div key={p.id} onClick={()=>setSelPlayers(prev=>prev.includes(p.id)?prev.filter(x=>x!==p.id):[...prev,p.id])}
+          style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,background:rowBg,borderLeft:borderL,border:`1px solid ${isSel?C.primary:C.border}`,borderLeftWidth:4,cursor:"pointer",opacity:p.active?1:.6}}>
+          {/* Checkbox */}
+          <div style={{color:isSel?C.primary:C.muted,flexShrink:0}}>{isSel?<CheckSquare size={17}/>:<Square size={17}/>}</div>
+          {/* Strength dot */}
+          <div style={{width:8,height:8,borderRadius:"50%",background:STR[p.strength]?.color||"#e2e8f0",flexShrink:0}}/>
+          {/* Name + meta */}
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:800,fontSize:14,color:C.text,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+              {p.name}
+              {bd?.isToday&&<span style={{fontSize:12}}>🎉</span>}
+              {!p.active&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:10,background:"#fef3c7",color:"#d97706",fontWeight:700}}>inaktiv</span>}
+            </div>
+            <div style={{display:"flex",gap:8,marginTop:2,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:11,color:STR[p.strength]?.color||C.muted,fontWeight:600}}>{STR[p.strength]?.emoji} {STR[p.strength]?.label}</span>
+              {p.jersey&&<span style={{fontSize:11,color:C.muted}}>#{p.jersey}</span>}
+              {bd&&<span style={{fontSize:11,fontWeight:bd.isToday||bd.wasPast||bd.isSoon?700:400,color:bd.isToday?"#16a34a":bd.wasPast?"#92400e":bd.isSoon?"#7c3aed":C.muted}}>🎂 {bd.label}</span>}
+              {(p.contacts||[]).length>0&&<span style={{fontSize:11,color:C.muted}}>📞 {p.contacts.length}</span>}
+            </div>
+          </div>
+          {/* Actions */}
+          <div style={{display:"flex",gap:2,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            <button onClick={()=>onEdit(p)} style={{padding:6,borderRadius:6,border:"none",background:"transparent",cursor:"pointer",color:C.muted}}><Edit2 size={14}/></button>
+            <button onClick={()=>onDel(p)} style={{padding:6,borderRadius:6,border:"none",background:"transparent",cursor:"pointer",color:"#ef4444"}}><Trash2 size={14}/></button>
+          </div>
+        </div>);
+      })}
+      {filtered.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:C.muted,fontSize:14}}>Keine Spieler gefunden.</div>}
+    </div>
+  </div>);
+}
+
 function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDeleteCoach,toast,onAddToTraining}) {
   const [tab,setTab]=useState("players");
   const [modal,setModal]=useState(null);
@@ -999,28 +1132,20 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
       </div>
     </div>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:12,width:"fit-content"}}>{tb("players","Spieler",players.length)}{tb("coaches","Trainer",coaches.length)}{tb("kontakte","Kontakte",players.filter(p=>(p.contacts||[]).length>0).length)}</div>
-    {totalSel>0&&<div style={{background:C.accentL,border:`1.5px solid ${C.accent}`,borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-      <span style={{fontWeight:700,color:C.primary,fontSize:14}}>✓ {totalSel} ausgewählt</span>
-      <Btn sm onClick={()=>setModal({type:"quickTraining"})}><CalendarDays size={13}/> Zum Training hinzufügen</Btn>
-      <Btn sm variant="secondary" onClick={()=>{setSelPlayers([]);setSelCoaches([]);}}>Auswahl leeren</Btn>
+    {totalSel>0&&<div style={{borderRadius:10,border:`1.5px solid ${C.primary}`,background:C.accentL,padding:"10px 14px",marginBottom:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span style={{fontWeight:800,color:C.primary,fontSize:14,flex:1}}>✓ {totalSel} Spieler ausgewählt</span>
+        <button onClick={()=>{setSelPlayers([]);setSelCoaches([]);}} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:13,fontFamily:"inherit",fontWeight:700}}>✕ Leeren</button>
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <Btn sm onClick={()=>{const selectedP=players.filter(p=>selPlayers.includes(p.id));const selectedC=coaches.filter(c=>selCoaches.includes(c.id));onAddToTraining?.({playerIds:selPlayers,coachIds:selCoaches,kids:selPlayers.length,coachCount:selectedC.length||1});setSelPlayers([]);setSelCoaches([]);}}><CalendarDays size={13}/> Training planen</Btn>
+        <Btn sm variant="secondary" onClick={()=>setModal({type:"teamBuilder",players:players.filter(p=>selPlayers.includes(p.id))})}><Shuffle size={13}/> Teams bilden</Btn>
+      </div>
     </div>}
     {tab==="players"&&(players.length===0?<Empty icon="👦" title="Noch keine Spieler" onAdd={()=>setModal({type:"pf",data:null})} addLabel="Ersten Spieler anlegen"/>:
-      <div>{[4,3,2,1].map(s=>{const g=grp[s];if(!g.length)return null;return(<div key={s} style={{marginBottom:20}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}><StrBadge level={s}/><span style={{fontSize:13,color:C.muted}}>{g.length} Spieler</span></div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10}}>
-          {g.map(p=>{const isSel=selPlayers.includes(p.id);return(<div key={p.id} style={{background:C.card,borderRadius:10,border:`2px solid ${isSel?C.primary:C.border}`,padding:"12px 14px",opacity:p.active?1:.6,cursor:"pointer"}} onClick={()=>setSelPlayers(prev=>prev.includes(p.id)?prev.filter(x=>x!==p.id):[...prev,p.id])}>
-            <div style={{display:"flex",justifyContent:"space-between",gap:6}}>
-              <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                <div style={{color:isSel?C.primary:C.muted,marginTop:2,flexShrink:0}}>{isSel?<CheckSquare size={16}/>:<Square size={16}/>}</div>
-                <div><div style={{fontWeight:800,fontSize:15,color:C.text}}>{p.name}</div>{p.jersey&&<div style={{fontSize:12,color:C.muted}}>#{p.jersey}</div>}{!p.active&&<div style={{fontSize:11,color:"#f59e0b",fontWeight:700}}>Inaktiv</div>}</div>
-              </div>
-              <div style={{display:"flex",gap:4}} onClick={e=>e.stopPropagation()}><button onClick={()=>setModal({type:"pf",data:p})} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4}}><Edit2 size={14}/></button><button onClick={()=>setDel({type:"player",id:p.id,name:p.name})} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button></div>
-            </div>
-            {p.notes&&<div style={{fontSize:12,color:C.muted,marginTop:6,fontStyle:"italic"}}>{p.notes}</div>}
-          </div>);})}
-        </div>
-      </div>);})}
-    </div>)}
+      <PlayerList players={players} selPlayers={selPlayers} setSelPlayers={setSelPlayers}
+        onEdit={p=>setModal({type:"pf",data:p})} onDel={p=>setDel({type:"player",id:p.id,name:p.name})}/>
+    )}
     {tab==="coaches"&&(coaches.length===0?<Empty icon="🧑‍🏫" title="Noch keine Trainer" onAdd={()=>setModal({type:"cf",data:null})} addLabel="Ersten Trainer anlegen"/>:
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
         {coaches.map(c=>{const isSel=selCoaches.includes(c.id);return(<div key={c.id} style={{background:C.card,borderRadius:10,border:`2px solid ${isSel?C.primary:C.border}`,padding:"14px 16px",opacity:c.active?1:.6,cursor:"pointer"}} onClick={()=>setSelCoaches(prev=>prev.includes(c.id)?prev.filter(x=>x!==c.id):[...prev,c.id])}>
@@ -1074,17 +1199,7 @@ function TeamPage({players,coaches,onSavePlayer,onDeletePlayer,onSaveCoach,onDel
     {del&&<Modal title="Löschen?" onClose={()=>setDel(null)}><p style={{color:C.text,marginTop:0}}>„<strong>{del.name}</strong>" wirklich löschen?</p><div style={{display:"flex",gap:10,justifyContent:"flex-end"}}><Btn onClick={()=>setDel(null)} variant="secondary">Abbrechen</Btn><Btn onClick={()=>{del.type==="player"?onDeletePlayer(del.id):onDeleteCoach(del.id);setDel(null);}} variant="danger"><Trash2 size={14}/> Löschen</Btn></div></Modal>}
     {modal?.type==="pf"&&<Modal title={modal.data?"Spieler bearbeiten":"Neuer Spieler"} onClose={()=>setModal(null)}><PlayerForm player={modal.data} onSave={(p,andAdd)=>{onSavePlayer(p);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="cf"&&<Modal title={modal.data?"Trainer bearbeiten":"Neuer Trainer"} onClose={()=>setModal(null)}><CoachForm coach={modal.data} onSave={(c,andAdd)=>{onSaveCoach(c);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="quickTraining"&&onAddToTraining&&<Modal title="Zum Training hinzufügen" onClose={()=>setModal(null)}>
-      <p style={{color:C.muted,fontSize:14,margin:"0 0 16px"}}>Diese Auswahl wird einem neuen Training zugeordnet:</p>
-      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:16}}>
-        {selPlayers.map(id=>{const p=players.find(x=>x.id===id);return p?<span key={id} style={{padding:"4px 10px",borderRadius:20,background:STR[p.strength].light,color:STR[p.strength].color,fontSize:13,fontWeight:700}}>{STR[p.strength].emoji} {p.name}</span>:null;})}
-        {selCoaches.map(id=>{const c=coaches.find(x=>x.id===id);return c?<span key={id} style={{padding:"4px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:13,fontWeight:700}}>🧑‍🏫 {c.name}</span>:null;})}
-      </div>
-      <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-        <Btn onClick={()=>setModal(null)} variant="secondary">Abbrechen</Btn>
-        <Btn onClick={()=>{onAddToTraining({playerIds:selPlayers,coachIds:selCoaches});setSelPlayers([]);setSelCoaches([]);setModal(null);}}>Training erstellen</Btn>
-      </div>
-    </Modal>}
+    {modal?.type==="teamBuilder"&&<Modal title="Teams bilden" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.players||players.filter(p=>p.active)} onSaveTeams={teams=>{toast(`${teams.length} Teams erstellt`);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
   </div>);
 }
 
@@ -2408,7 +2523,8 @@ function Nav({page,setPage,counts}) {
 
 // ── APP ───────────────────────────────────────────────────────────
 export default function App() {
-  const [page,setPage]=useState("library");
+  const [page,setPage]=useState(()=>sessionStorage.getItem("gjPage")||"library");
+  useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
   const [exercises,  setExercises,  er]=useStorage("exercises",  []);
   const [players,    setPlayers,    pr]=useStorage("players",    []);
   const [coaches,    setCoaches,    cr]=useStorage("coaches",    []);
@@ -2461,7 +2577,7 @@ export default function App() {
     <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length}}/>
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{setExercises(prev=>prev.filter(e=>e.id!==id));toast("Übung gelöscht");}} apiKey={apiKey} toast={toast}/>}
-      {page==="team"     &&<TeamPage     players={players} coaches={coaches} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds})=>{setSessions(prev=>[...prev,{id:uid(),createdAt:now(),date:todayISO(),duration:60,location:"",weather:"",participantCount:"",coachIds,playerIds,exerciseIds:[],teams:[],notes:""}]);setPage("training");toast("Training angelegt ✓");}}/>}
+      {page==="team"     &&<TeamPage     players={players} coaches={coaches} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPage("training");setTimeout(()=>window._openTrainingSetup?.({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1}),50);}}/>}
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}} coaches={coaches}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
