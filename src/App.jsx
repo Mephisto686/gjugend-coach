@@ -5,8 +5,9 @@ import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, D
 // ── DEXIE DB ──────────────────────────────────────────────────────
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
+db.version(2).stores({ kv: 'key', teamsets: '++id,date' });
 
-const APP_VERSION = "3.6.2";
+const APP_VERSION = "3.7.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -700,7 +701,7 @@ function ExerciseForm({exercise,onSave,onClose}) {
     <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Tags</label><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{PTAGS.map(t=><button key={t} onClick={()=>set("tags",form.tags.includes(t)?form.tags.filter(x=>x!==t):[...form.tags,t])} style={chip(form.tags.includes(t))}>{t}</button>)}</div></div>
     <div style={{marginBottom:14}}>
       <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Skizze / Foto</label>
-      {form.imageUrl?<div style={{position:"relative",display:"inline-block"}}><img src={form.imageUrl} alt="" style={{maxWidth:"100%",maxHeight:180,borderRadius:8,objectFit:"cover",border:`1px solid ${C.border}`}}/><button onClick={()=>set("imageUrl","")} style={{position:"absolute",top:6,right:6,background:"rgba(0,0,0,.6)",color:"white",border:"none",borderRadius:6,cursor:"pointer",padding:"3px 8px",fontSize:12}}>✕</button></div>:<button onClick={()=>imgRef.current.click()} style={{padding:"10px 16px",border:`1.5px dashed ${C.border}`,borderRadius:8,cursor:"pointer",background:"white",color:C.muted,fontSize:13,fontFamily:"inherit"}}>📷 Bild hochladen</button>}
+      {form.imageUrl?<div style={{position:"relative",display:"inline-block"}}><img src={form.imageUrl} alt="" style={{maxWidth:"100%",maxHeight:300,borderRadius:8,objectFit:"contain",border:`1px solid ${C.border}`,background:"#f8fafc"}}/><button onClick={()=>set("imageUrl","")} style={{position:"absolute",top:6,right:6,background:"rgba(0,0,0,.6)",color:"white",border:"none",borderRadius:6,cursor:"pointer",padding:"3px 8px",fontSize:12}}>✕</button></div>:<button onClick={()=>imgRef.current.click()} style={{padding:"10px 16px",border:`1.5px dashed ${C.border}`,borderRadius:8,cursor:"pointer",background:"white",color:C.muted,fontSize:13,fontFamily:"inherit"}}>📷 Bild hochladen</button>}
       <input ref={imgRef} type="file" accept="image/*" onChange={async e=>{const f=e.target.files?.[0];if(f)set("imageUrl",await readDataURL(f));}} style={{display:"none"}}/>
     </div>
     <Inp label="Quelle" value={form.source} onChange={e=>set("source",e.target.value)} placeholder="DFB Übungssammlung, eigene Idee..."/>
@@ -718,20 +719,20 @@ function ExerciseForm({exercise,onSave,onClose}) {
 }
 
 // ── EXERCISE DETAIL ───────────────────────────────────────────────
-function ExDetail({exercise:ex,onEdit,onDelete,onClose}) {
+function ExDetail({exercise:ex,onEdit,onSave,onDelete,onClose}) {
   return(<div>
     <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
       <CatBadge cat={ex.category}/>
       <span style={{color:C.muted,fontSize:13,marginLeft:"auto"}}>⏱ {ex.duration} Min · 👥 {ex.minPlayers}–{ex.maxPlayers}</span>
     </div>
     <div style={{display:"flex",gap:8,marginBottom:16,alignItems:"center",background:"#f8fafc",borderRadius:10,padding:"10px 12px",border:`1px solid ${C.border}`,flexWrap:"wrap"}}>
-      <button onClick={()=>onEdit({...ex,done:!ex.done})} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${ex.done?"#22c55e":C.border}`,background:ex.done?"#dcfce7":"white",color:ex.done?"#15803d":C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit",flexShrink:0}}>{ex.done?"✅ Gemacht":"⏳ Noch nicht"}</button>
+      <button onClick={()=>(onSave||onEdit)({...ex,done:!ex.done})} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${ex.done?"#22c55e":C.border}`,background:ex.done?"#dcfce7":"white",color:ex.done?"#15803d":C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit",flexShrink:0}}>{ex.done?"✅ Gemacht":"⏳ Noch nicht"}</button>
       <div style={{display:"flex",gap:3,alignItems:"center",marginLeft:4}}>
-        {[1,2,3,4,5].map(n=><button key={n} onClick={()=>onEdit({...ex,rating:ex.rating===n?0:n})} style={{width:30,height:30,borderRadius:6,border:"none",background:"transparent",fontSize:20,cursor:"pointer",color:n<=(ex.rating||0)?"#f59e0b":"#d1d5db",padding:0,lineHeight:1}}>★</button>)}
+        {[1,2,3,4,5].map(n=><button key={n} onClick={()=>(onSave||onEdit)({...ex,rating:ex.rating===n?0:n})} style={{width:30,height:30,borderRadius:6,border:"none",background:"transparent",fontSize:20,cursor:"pointer",color:n<=(ex.rating||0)?"#f59e0b":"#d1d5db",padding:0,lineHeight:1}}>★</button>)}
         {!(ex.rating>0)&&<span style={{fontSize:11,color:C.muted,marginLeft:2,fontStyle:"italic"}}>Tippen zum Bewerten</span>}
       </div>
     </div>
-    {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:10,marginBottom:16,border:`1px solid ${C.border}`}}/>}
+    {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:400,objectFit:"contain",borderRadius:10,marginBottom:16,border:`1px solid ${C.border}`,background:"#f8fafc"}}/>}
     {ex.setup&&<div style={{marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>📐 Aufbau</div><div style={{fontSize:14,color:C.text,lineHeight:1.6,background:"#f8fafc",borderRadius:8,padding:"12px 14px",border:`1px solid ${C.border}`}}>{ex.setup}</div></div>}
     {ex.description&&<div style={{marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>🎯 Ablauf</div><div style={{fontSize:14,color:C.text,lineHeight:1.6,background:"#f8fafc",borderRadius:8,padding:"12px 14px",border:`1px solid ${C.border}`}}>{ex.description}</div></div>}
     {ex.material?.length>0&&<div style={{marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>📦 Material</div><div style={{display:"flex",flexWrap:"wrap",gap:6}}>{ex.material.map(m=><span key={m} style={{padding:"4px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div></div>}
@@ -843,7 +844,7 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
                 style={{background:C.card,borderRadius:12,border:`2px solid ${selMode&&isSel?C.primary:C.border}`,padding:"14px 16px",cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"box-shadow .15s",position:"relative",opacity:selMode&&!isSel?.7:1}}
                 onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
                 {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
-                {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",height:100,objectFit:"cover",borderRadius:8}}/>}
+                {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:120,objectFit:"contain",borderRadius:8,background:"#f8fafc"}}/>}
                 <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
                 <CatBadge cat={ex.category} small/>
                 <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -862,7 +863,7 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
     </div>}
     {modal?.type==="ai"&&<Modal title="🤖 KI-Import" onClose={()=>setModal(null)} wide><AIImportModal apiKey={apiKey} onSave={ex=>{onSave(ex);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="form"&&<Modal title={modal.ex?"Übung bearbeiten":"Neue Übung"} onClose={()=>setModal(null)} wide><ExerciseForm exercise={modal.ex} onSave={(ex,andAdd)=>{onSave(ex);if(!andAdd)setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="detail"&&<Modal title={modal.ex.title} onClose={()=>setModal(null)} wide><ExDetail exercise={modal.ex} onEdit={()=>setModal({type:"form",ex:modal.ex})} onDelete={onDelete} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="detail"&&<Modal title={modal.ex.title} onClose={()=>setModal(null)} wide><ExDetail exercise={modal.ex} onEdit={()=>setModal({type:"form",ex:modal.ex})} onSave={ex=>{onSave({...ex,updatedAt:now()});setModal(m=>m?{...m,ex}:m);}} onDelete={onDelete} onClose={()=>setModal(null)}/></Modal>}
   </div>);
 }
 
@@ -1258,7 +1259,7 @@ function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeleteP
 }
 
 // ── TEAM BUILDER ──────────────────────────────────────────────────
-function TeamBuilderModal({availablePlayers,onSaveTeams,onClose}) {
+function TeamBuilderModal({availablePlayers,onSaveTeams,onClose,onSaveTeamset}) {
   const activeDef=availablePlayers.filter(p=>p.active);
   const defTeams=Math.max(2,Math.round(activeDef.length/3));
   const [numTeams,setNumTeams]=useState(defTeams);
@@ -1313,9 +1314,9 @@ function TeamBuilderModal({availablePlayers,onSaveTeams,onClose}) {
           <div style={{fontSize:11,color:C.muted,marginTop:6}}>Ø {(t.players.reduce((s,p)=>s+p.strength,0)/(t.players.length||1)).toFixed(1)}</div>
         </div>)}
       </div>
-      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:16}}>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:16,flexWrap:"wrap"}}>
         <Btn onClick={generate} variant="secondary"><RefreshCw size={14}/> Neu mischen</Btn>
-        <Btn variant="secondary" onClick={()=>onSaveTeams(teams,false)}>Teams speichern</Btn>
+        {onSaveTeamset&&<Btn variant="secondary" onClick={()=>{onSaveTeamset({id:uid(),date:todayISO(),name:`Teams ${new Date().toLocaleDateString("de-DE")}`,teams,createdAt:now()});onSaveTeams(teams,false);}}>💾 Speichern</Btn>}
         <Btn onClick={()=>onSaveTeams(teams,true)}><CalendarDays size={14}/> Als Training</Btn>
       </div>
     </>)}
@@ -1915,10 +1916,56 @@ function printSession(s,exercises,toast) {
 }
 
 
+function ShareTeamsModal({teamset,onClose,toast}) {
+  const lines=[
+    `⚽ ${teamset.name||"Teams"}`,
+    `📅 ${new Date(teamset.date).toLocaleDateString("de-DE")}`,
+    "",
+    ...teamset.teams.flatMap((t,i)=>[
+      `${["🔴","🔵","🟢","🟡","🟠","🟣","⚪","🟤"][i%8]} *${t.name}* (${t.players?.length||0} Kinder)`,
+      ...(t.players||[]).map(p=>`  • ${p.name}`),
+      ""
+    ])
+  ];
+  const text=lines.join("\n").trim();
+
+  const copyText=()=>{
+    if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast("Text kopiert ✓"));
+    else{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);toast("Text kopiert ✓");}
+  };
+  const shareWA=()=>{
+    const url="https://wa.me/?text="+encodeURIComponent(text);
+    window.open(url,"_blank");
+  };
+  const printTeams=()=>{
+    const css=`body{font-family:-apple-system,sans-serif;padding:24px;max-width:600px;margin:0 auto}h1{font-size:20px;margin:0 0 4px}.date{font-size:13px;color:#6b7280;margin-bottom:20px}.teams{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}.team{border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden}.team-header{padding:8px 14px;font-weight:800;font-size:14px}.player{padding:4px 14px;font-size:13px;border-top:1px solid #f1f5f9}@media print{@page{margin:1cm}}`;
+    const teamsHtml=teamset.teams.map((t,i)=>{
+      const cols=["#fee2e2","#dbeafe","#dcfce7","#fef9c3","#ffedd5","#f3e8ff","#f1f5f9","#fce7f3"];
+      return`<div class="team"><div class="team-header" style="background:${cols[i%cols.length]}">${["🔴","🔵","🟢","🟡","🟠","🟣","⚪","🟤"][i%8]} ${t.name}</div>${(t.players||[]).map(p=>`<div class="player">${p.name}</div>`).join("")}</div>`;
+    }).join("");
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Teams</title><style>${css}</style></head><body><h1>${teamset.name||"Teams"}</h1><div class="date">📅 ${new Date(teamset.date).toLocaleDateString("de-DE")} · ${teamset.teams.length} Teams · ${teamset.teams.reduce((s,t)=>s+(t.players?.length||0),0)} Kinder</div><div class="teams">${teamsHtml}</div></body></html>`;
+    const w=window.open("","_blank");
+    if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),400);}
+    else{saveFileSync(html,"teams.html","text/html");toast("Als HTML gespeichert");}
+  };
+
+  return(<div>
+    <div style={{background:"#f8fafc",borderRadius:10,padding:"14px 16px",marginBottom:16,border:`1px solid ${C.border}`,fontFamily:"monospace",fontSize:13,lineHeight:1.7,whiteSpace:"pre-wrap",maxHeight:300,overflowY:"auto"}}>{text}</div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+      <Btn sm variant="secondary" onClick={onClose}>Schließen</Btn>
+      <Btn sm variant="secondary" onClick={copyText}>📋 Kopieren</Btn>
+      <Btn sm variant="secondary" onClick={printTeams}>🖨️ PDF</Btn>
+      <Btn sm onClick={shareWA}>💬 WhatsApp</Btn>
+    </div>
+  </div>);
+}
+
+
 // ── TRAINING PAGE ─────────────────────────────────────────────────
-function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise,pendingSetup,onClearPendingSetup}) {
+function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise,pendingSetup,onClearPendingSetup,teamsets,onSaveTeamset,onDeleteTeamset}) {
   const [tab,setTab]=useState("history");
-  const [modal,setModal]=useState(null);
+  const [modal,setModal]=useState(()=>pendingSetup?{type:"setup",setup:pendingSetup}:null);
+  useEffect(()=>{if(pendingSetup){setModal({type:"setup",setup:pendingSetup});onClearPendingSetup?.();}},[]);
   const sorted=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date));
   const gP=id=>players.find(p=>p.id===id),gC=id=>coaches.find(c=>c.id===id),gE=id=>exercises.find(e=>e.id===id);
   const tb=(k,l)=><button onClick={()=>setTab(k)} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}</button>;
@@ -1960,13 +2007,57 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
           </div>);
         })}
       </div>)}
-    {tab==="teams"&&<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:20}}><h2 style={{margin:"0 0 6px",fontSize:18,fontWeight:800}}>Schnelle Teambildung</h2><p style={{margin:"0 0 16px",color:C.muted,fontSize:14}}>Teams bilden ohne Training zu protokollieren.</p><Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={16}/> Teams zusammenstellen</Btn></div>}
+    {tab==="teams"&&<div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div><h2 style={{margin:0,fontSize:16,fontWeight:800,color:C.text}}>Teams</h2><div style={{fontSize:12,color:C.muted,marginTop:2}}>{(teamsets||[]).length} gespeicherte Aufstellungen</div></div>
+        <Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={14}/> Neue Teams</Btn>
+      </div>
+      {(teamsets||[]).length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.muted}}>
+        <div style={{fontSize:40,marginBottom:12}}>👥</div>
+        <div style={{fontSize:15,fontWeight:700,marginBottom:6}}>Noch keine Teams gespeichert</div>
+        <div style={{fontSize:13}}>Erstelle Teams und speichere sie für später.</div>
+      </div>:
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {[...(teamsets||[])].sort((a,b)=>b.date?.localeCompare(a.date||"")).map(ts=>(
+          <div key={ts.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}>
+              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{ts.name||`Teams vom ${new Date(ts.date).toLocaleDateString("de-DE")}`}</div>
+                <div style={{fontSize:12,color:C.muted}}>{new Date(ts.date).toLocaleDateString("de-DE")} · {ts.teams.length} Teams · {ts.teams.reduce((s,t)=>s+(t.players?.length||0),0)} Kinder</div>
+              </div>
+              <button onClick={()=>setModal({type:"shareTeams",teamset:ts})} style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontSize:12,color:C.muted,fontFamily:"inherit"}}>📤 Teilen</button>
+              <button onClick={()=>{if(confirm("Löschen?"))onDeleteTeamset(ts.id);}} style={{padding:5,borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={14}/></button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:0}}>
+              {ts.teams.map((t,i)=>(
+                <div key={t.id||i} style={{padding:"10px 14px",borderRight:i<ts.teams.length-1?`1px solid ${C.border}`:"none"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                    <div style={{width:10,height:10,borderRadius:"50%",background:TCOLORS[i%TCOLORS.length],flexShrink:0}}/>
+                    <span style={{fontWeight:800,fontSize:13,color:C.text}}>{t.name}</span>
+                  </div>
+                  {t.players?.map(p=><div key={p.id||p.name} style={{fontSize:12,color:C.muted,padding:"1px 0"}}>{p.name}</div>)}
+                  <div style={{fontSize:11,color:C.muted,marginTop:4}}>Ø {t.players?.length?(t.players.reduce((s,p)=>s+(p.strength||2),0)/t.players.length).toFixed(1):"–"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>}
+    </div>}
     {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="setup"&&<Modal title={modal.replaceId?"Training neu planen":"Training planen"} onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} initialSetup={modal.setup} onClose={()=>setModal(null)} onPlanManual={setup=>setModal({type:"manual",setup,replaceId:modal.replaceId})} onPlanKI={setup=>setModal({type:"ai",setup,replaceId:modal.replaceId})}/></Modal>}
     {modal?.type==="manual"&&<Modal title={modal.replaceId?"📋 Neu planen":"📋 Manuell planen"} onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
     {modal?.type==="ai"&&<Modal title={modal.replaceId?"🤖 Neu planen (KI)":"🤖 KI-Trainingsplan"} onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
+    {modal?.type==="shareTeams"&&modal.teamset&&<Modal title="Teams teilen" onClose={()=>setModal(null)} wide><ShareTeamsModal teamset={modal.teamset} onClose={()=>setModal(null)} toast={toast}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={teams=>{if(modal.data.session)onSaveSession({...modal.data.session,teams});setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={(teams,goTraining)=>{
+        if(modal.data.session) onSaveSession({...modal.data.session,teams});
+        if(goTraining){
+          const ids=(modal.data.players||players.filter(p=>p.active)).map(p=>p.id);
+          const setup={playerIds:ids,coachIds:[],kids:ids.length,coachCount:1,date:todayISO(),location:"outdoor",focus:""};
+          setPendingSetup(setup);setPage?.("training");
+        }
+        setModal(null);
+      }} onSaveTeamset={onSaveTeamset} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession} onPrint={()=>printSession(modal.data,exercises,toast)} onReplan={()=>{
       const s=modal.data;
       setModal({type:"setup",replaceId:s.id,setup:{kids:Number(s.participantCount)||players.filter(p=>p.active).length,coachCount:s.coachIds?.length||1,duration:s.duration||60,location:s.location==="Halle"?"indoor":"outdoor",date:s.date,playerIds:s.playerIds||[],coachIds:s.coachIds||[],focus:""}});
@@ -2307,10 +2398,13 @@ const KASSE_CATS_AUS = ["Material","Turnierbeitrag","Ausrüstung","Verpflegung",
 
 function KasseForm({entry,onSave,onClose}) {
   const [form,setForm]=useState({date:todayISO(),description:"",amount:"",type:"ein",category:"Sonstiges",...entry});
+  const [err,setErr]=useState("");
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const cats=form.type==="ein"?KASSE_CATS_EIN:KASSE_CATS_AUS;
   const doSave=()=>{
-    if(!form.description.trim()||!form.amount)return;
+    if(!form.description.trim()){setErr("Bitte eine Beschreibung eingeben.");return;}
+    if(!form.amount||parseFloat(form.amount)<=0){setErr("Bitte einen gültigen Betrag eingeben.");return;}
+    setErr("");
     onSave({...form,id:form.id||uid(),amount:parseFloat(form.amount)||0,createdAt:form.createdAt||now()});
   };
   return(<div>
@@ -2322,8 +2416,9 @@ function KasseForm({entry,onSave,onClose}) {
       <Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)} style={{marginBottom:0}}/>
       <div style={{marginBottom:14}}><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Betrag (€)</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e=>set("amount",e.target.value)} placeholder="0,00" style={{width:"100%",padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",boxSizing:"border-box"}}/></div>
     </div>
-    <Inp label="Beschreibung *" value={form.description} onChange={e=>set("description",e.target.value)} placeholder="z.B. Trikots, Turnieranmeldung..."/>
+    <Inp label="Beschreibung *" value={form.description} onChange={e=>{set("description",e.target.value);setErr("");}} placeholder="z.B. Trikots, Turnieranmeldung..."/>
     <Sel label="Kategorie" value={form.category} onChange={e=>set("category",e.target.value)}>{cats.map(c=><option key={c} value={c}>{c}</option>)}</Sel>
+    {err&&<div style={{color:"#dc2626",fontSize:13,fontWeight:600,marginBottom:8}}>⚠️ {err}</div>}
     <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${C.border}`}}>
       <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
       <Btn onClick={doSave}>{entry?.id?"Speichern":"Eintragen"}</Btn>
@@ -2589,6 +2684,8 @@ export default function App() {
   const [kassenbuch, setKassenbuch, kr]=useStorage("kassenbuch", []);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
   const [customCats, setCustomCats    ]=useStorage("customCats", []);
+  const [teamsets,   setTeamsets        ]=useStorage("teamsets",   []);
+  const saveTSets=x=>setTeamsets(upsert(x));
   // Sync CATS global whenever customCats changes
   useEffect(()=>{
     const merged={...BUILTIN_CATS};
@@ -2634,7 +2731,7 @@ export default function App() {
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{setExercises(prev=>prev.filter(e=>e.id!==id));toast("Übung gelöscht");}} apiKey={apiKey} toast={toast}/>}
       {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}}/>}
-      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)}/>}
+      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>setTeamsets(prev=>prev.filter(t=>t.id!==id))}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}} coaches={coaches}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
       {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats}/>}
