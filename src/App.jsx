@@ -7,7 +7,7 @@ const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 db.version(2).stores({ kv: 'key', teamsets: '++id,date' });
 
-const APP_VERSION = "3.7.0";
+const APP_VERSION = "3.7.3";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -760,12 +760,53 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
   const [selMode,setSelMode]=useState(false);
   const [selIds,setSelIds]=useState([]);
   const [collapsed,setCollapsed]=useState({});
+  const [viewMode,setViewMode]=useState("grid"); // grid | compact
   const toggleCat=cat=>setCollapsed(c=>({...c,[cat]:!c[cat]}));
   const importRef=useRef();
   const toggleSel=id=>setSelIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   const bulkExport=()=>{
     const sel=exercises.filter(e=>selIds.includes(e.id));
     dlJson({version:APP_VERSION,exportDate:now(),type:"exercises",exercises:sel},`GJugend_Uebungen-Auswahl_${sel.length}-Eintraege_${todayISO()}.json`,toast);
+  };
+
+  const printExercises=(exList)=>{
+    const esc=s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const bgMap={aufwaermen:"#fff3e0",koordination:"#f3e8ff",technik:"#e8f0fe",spielform:"#e8f5e9",abschluss:"#fce4ec"};
+    const colMap={aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
+    const exHtml=exList.map(ex=>{
+      const bg=bgMap[ex.category]||"#f8fafc";
+      const col=colMap[ex.category]||"#374151";
+      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:280px;object-fit:contain;border-radius:8px;margin:10px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+      const stars=ex.rating>0?"★".repeat(ex.rating)+"☆".repeat(5-ex.rating):"";
+      return `
+        <div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:20px;overflow:hidden;page-break-inside:avoid">
+          <div style="background:${bg};padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-weight:900;font-size:16px;color:${col};flex:1">${esc(ex.title)}</span>
+            <span style="font-size:12px;padding:2px 10px;border-radius:20px;background:${col}22;color:${col};font-weight:700">${esc(CATS[ex.category]?.emoji||"")} ${esc(CATS[ex.category]?.label||ex.category)}</span>
+            ${ex.duration?`<span style="font-size:12px;color:#64748b">⏱ ${ex.duration} Min</span>`:""}
+            ${ex.minPlayers?`<span style="font-size:12px;color:#64748b">👥 ${ex.minPlayers}–${ex.maxPlayers}</span>`:""}
+            ${stars?`<span style="font-size:13px;color:#f59e0b">${stars}</span>`:""}
+          </div>
+          <div style="padding:14px 16px">
+            ${img}
+            ${ex.setup?`<div style="background:#f8fafc;border-radius:8px;padding:10px 14px;margin-bottom:12px;border-left:3px solid #94a3b8"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">📐 Aufbau</div><div style="font-size:14px;line-height:1.7;color:#111">${esc(ex.setup)}</div></div>`:""}
+            ${ex.description?`<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">🎯 Ablauf</div><div style="font-size:14px;line-height:1.7;color:#111">${esc(ex.description)}</div></div>`:""}
+            ${ex.material?.length?`<div style="margin-bottom:8px;font-size:13px;color:#475569">📦 <strong>Material:</strong> ${esc(ex.material.join(", "))}</div>`:""}
+            ${ex.tags?.length?`<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${ex.tags.map(t=>`<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#f1f5f9;color:#475569">${esc(t)}</span>`).join("")}</div>`:""}
+            ${ex.notes?`<div style="padding:8px 12px;background:#faf5ff;border-radius:6px;font-size:13px;color:#6d28d9;font-style:italic">💡 ${esc(ex.notes)}</div>`:""}
+          </div>
+        </div>`;
+    }).join("");
+    const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111}.footer{margin-top:24px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}@media print{body{padding:12px}@page{margin:1.5cm}}`;
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Übungen (${exList.length})</title><style>${css}</style></head><body>
+      <h1 style="font-size:22px;margin:0 0 4px">Übungssammlung</h1>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb">${exList.length} Übung${exList.length!==1?"en":""} · SC Sternschanze G-Jugend</div>
+      ${exHtml}
+      <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
+    </body></html>`;
+    const w=window.open("","_blank");
+    if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
+    else{saveFileSync(html,`GJugend_Uebungen_${todayISO()}.html`,"text/html");toast("Als HTML gespeichert – im Browser öffnen und drucken");}
   };
 
   const handleImportJson=async e=>{
@@ -796,13 +837,19 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
         {selMode
           ?<><Btn sm variant="secondary" onClick={()=>setSelIds(filtered.map(e=>e.id))}>Alle</Btn>
             <Btn sm variant="secondary" onClick={()=>setSelIds([])}>Keine</Btn>
-            {selIds.length>0&&<Btn sm onClick={bulkExport}><Download size={13}/> {selIds.length} exportieren</Btn>}
+            {selIds.length>0&&<><Btn sm onClick={bulkExport}><Download size={13}/> {selIds.length} JSON</Btn>
+            <Btn sm onClick={()=>printExercises(exercises.filter(e=>selIds.includes(e.id)))}>🖨️ PDF</Btn></>}
             <Btn sm variant="secondary" onClick={()=>{setSelMode(false);setSelIds([]);}}>✕ Auswahl</Btn></>
           :<><Btn onClick={()=>setSelMode(true)} variant="secondary" sm><CheckSquare size={14}/> Auswahl</Btn>
             <Btn onClick={()=>importRef.current.click()} variant="secondary" sm><Upload size={14}/> Import</Btn>
             <input ref={importRef} type="file" accept=".json" onChange={handleImportJson} style={{display:"none"}}/>
             <Btn onClick={()=>setModal({type:"ai"})} variant="ai" sm><Bot size={14}/> KI</Btn>
             <Btn onClick={()=>setModal({type:"form",ex:null})}><Plus size={16}/> Neu</Btn></>}
+        <div style={{display:"flex",border:`1.5px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+          {[["grid","⊞"],["compact","☰"]].map(([m,icon])=>(
+            <button key={m} onClick={()=>setViewMode(m)} style={{padding:"6px 11px",border:"none",background:viewMode===m?C.primary:"white",color:viewMode===m?"white":C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>{icon}</button>
+          ))}
+        </div>
       </div>
     </div>
     <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
@@ -837,27 +884,53 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
             <span style={{fontSize:12,fontWeight:700,color:catInfo.color,padding:"2px 8px",borderRadius:20,background:catInfo.color+"22"}}>{catExs.length}</span>
             <span style={{fontSize:12,color:catInfo.color,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
           </button>
-          {isOpen&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:12}}>
-            {catExs.map(ex=>{
-              const isSel=selIds.includes(ex.id);
-              return(<div key={ex.id} onClick={()=>selMode?toggleSel(ex.id):setModal({type:"detail",ex})}
-                style={{background:C.card,borderRadius:12,border:`2px solid ${selMode&&isSel?C.primary:C.border}`,padding:"14px 16px",cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"box-shadow .15s",position:"relative",opacity:selMode&&!isSel?.7:1}}
-                onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-                {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
-                {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:120,objectFit:"contain",borderRadius:8,background:"#f8fafc"}}/>}
-                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
-                <CatBadge cat={ex.category} small/>
-                <div style={{display:"flex",alignItems:"center",gap:4}}>
-                  {ex.done&&<span style={{fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:10,background:"#dcfce7",color:"#16a34a"}}>✅</span>}
-                  <Stars value={ex.rating} readonly/>
-                </div>
-              </div>
-                <div style={{fontWeight:800,fontSize:15,color:C.text}}>{ex.title}</div>
-                <div style={{display:"flex",gap:10,color:C.muted,fontSize:12,fontWeight:600,flexWrap:"wrap"}}><span>⏱ {ex.duration} Min</span><span>👥 {ex.minPlayers}–{ex.maxPlayers}</span>{ex.material?.length>0&&<span>📦 {ex.material.length}x</span>}</div>
-                {ex.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.tags.slice(0,3).map(t=><span key={t} style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}{ex.tags.length>3&&<span style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11}}>+{ex.tags.length-3}</span>}</div>}
-              </div>);
-            })}
-          </div>}
+          {isOpen&&(viewMode==="compact"
+            ?<div style={{display:"flex",flexDirection:"column",gap:1,background:C.card,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`,marginBottom:4}}>
+              {catExs.map(ex=>{
+                const isSel=selIds.includes(ex.id);
+                return(<div key={ex.id} onClick={()=>selMode?toggleSel(ex.id):setModal({type:"detail",ex})}
+                  style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",cursor:"pointer",background:isSel?C.accentL:"white",borderBottom:`1px solid #f1f5f9`}}>
+                  {ex.imageUrl
+                    ?<img src={ex.imageUrl} alt="" style={{width:36,height:36,objectFit:"cover",borderRadius:5,flexShrink:0}}/>
+                    :<div style={{width:36,height:36,borderRadius:5,background:catInfo.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{catInfo.emoji}</div>}
+                  {selMode&&<div style={{color:isSel?C.primary:C.muted,flexShrink:0}}>{isSel?<CheckSquare size={15}/>:<Square size={15}/>}</div>}
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:14,color:C.text,display:"flex",alignItems:"center",gap:5}}>
+                      {ex.title}
+                      {ex.done&&<span style={{fontSize:10,padding:"1px 5px",borderRadius:10,background:"#dcfce7",color:"#16a34a",fontWeight:700}}>✅</span>}
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,display:"flex",gap:6,marginTop:1}}>
+                      <span>⏱ {ex.duration}m</span>
+                      {ex.rating>0&&<span style={{color:"#f59e0b"}}>{"★".repeat(ex.rating)}</span>}
+                      {ex.material?.length>0&&<span>📦 {ex.material.length}</span>}
+                    </div>
+                  </div>
+                  <span style={{color:C.muted,fontSize:16}}>›</span>
+                </div>);
+              })}
+            </div>
+            :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:12}}>
+              {catExs.map(ex=>{
+                const isSel=selIds.includes(ex.id);
+                return(<div key={ex.id} onClick={()=>selMode?toggleSel(ex.id):setModal({type:"detail",ex})}
+                  style={{background:C.card,borderRadius:12,border:`2px solid ${selMode&&isSel?C.primary:C.border}`,padding:"14px 16px",cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"box-shadow .15s",position:"relative",opacity:selMode&&!isSel?.7:1}}
+                  onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+                  {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
+                  {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:120,objectFit:"cover",borderRadius:8}}/>}
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+                    <CatBadge cat={ex.category} small/>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      {ex.done&&<span style={{fontSize:10,fontWeight:700,padding:"1px 6px",borderRadius:10,background:"#dcfce7",color:"#16a34a"}}>✅</span>}
+                      <Stars value={ex.rating} readonly/>
+                    </div>
+                  </div>
+                  <div style={{fontWeight:800,fontSize:15,color:C.text}}>{ex.title}</div>
+                  <div style={{display:"flex",gap:10,color:C.muted,fontSize:12,fontWeight:600,flexWrap:"wrap"}}><span>⏱ {ex.duration} Min</span><span>👥 {ex.minPlayers}–{ex.maxPlayers}</span>{ex.material?.length>0&&<span>📦 {ex.material.length}x</span>}</div>
+                  {ex.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.tags.slice(0,3).map(t=><span key={t} style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}{ex.tags.length>3&&<span style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11}}>+{ex.tags.length-3}</span>}</div>}
+                </div>);
+              })}
+            </div>
+          )}
         </div>);
       })}
     </div>}
@@ -1504,7 +1577,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
           <p style="margin:6px 0 0;padding:6px 10px;background:#faf5ff;border-radius:6px;color:#6d28d9;font-size:12px">🧑‍🏫 Trainer nutzen diese ${ph.minutes} Min zum Aufbau der nächsten Station.</p>
         </div>`;
       } else if(ph.stations){
-        const rot=Math.floor(ph.minutes/2);
+        const rot=ph.stations?Math.floor(ph.minutes/ph.stations.length):Math.floor(ph.minutes/2);
         body=`<div style="padding:8px 14px 2px;font-size:12px;color:#7c3aed;font-weight:700;background:#faf5ff;border-bottom:1px solid #e9d5ff">
           🔄 Rotation nach ${rot} Min (Pfiff) — ${ph.block.stations} Gruppen wechseln im Uhrzeigersinn
         </div>`;
@@ -1587,7 +1660,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
         {plan.phases.map((ph,i)=>{
           const showBreak=i<plan.phases.length-1&&!ph.isFree&&plan.breakMin>0;
           const bg=phCol[ph.block.cat||"ankommen"]||"#f8fafc";
-          const rotMin=Math.floor(ph.minutes/2);
+          const rotMin=ph.stations?Math.floor(ph.minutes/ph.block.stations):Math.floor(ph.minutes/2);
           const phaseEl=(<div>
             <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{fontWeight:800,fontSize:14}}>{ph.block.emoji} {ph.block.label}</div>
@@ -1630,7 +1703,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
                 </div>}
             </div>
           </div>);
-          return <React.Fragment key={i}><div style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",marginBottom:showBreak?0:10}}>{phaseEl}</div>{showBreak&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 16px",color:"#94a3b8",fontSize:12}}><div style={{flex:1,height:1,background:"#e2e8f0"}}/><span>⏸ {plan.breakMin} Min Pause</span><div style={{flex:1,height:1,background:"#e2e8f0"}}/></div>}</React.Fragment>;
+          return <><div key={i} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",marginBottom:showBreak?0:10}}>{phaseEl}</div>{showBreak&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 16px",color:"#94a3b8",fontSize:12}}><div style={{flex:1,height:1,background:"#e2e8f0"}}/><span>⏸ {plan.breakMin} Min Pause</span><div style={{flex:1,height:1,background:"#e2e8f0"}}/></div>}</>;
         })}
       </div>
       {remaining!==0&&<div style={{padding:"8px 14px",borderRadius:8,background:remaining>0?"#f0fdf4":"#fef2f2",border:`1px solid ${remaining>0?"#86efac":"#fca5a5"}`,fontSize:13,color:remaining>0?"#166534":"#991b1b",marginBottom:12}}>
@@ -1754,7 +1827,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
                     </select>
                   </div>
                 ))}
-                <div style={{fontSize:11,color:"#7c3aed",fontStyle:"italic"}}>↔ Rotation nach {Math.floor(b.minutes/2)} Min</div>
+                <div style={{fontSize:11,color:"#7c3aed",fontStyle:"italic"}}>↔ Rotation nach {Math.floor(b.minutes/b.stations)} Min · {b.stations-1}× tauschen damit alle jede Station hatten</div>
               </div>}
             </div>}
         </div>}
