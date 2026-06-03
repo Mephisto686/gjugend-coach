@@ -776,7 +776,7 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
     const exHtml=exList.map(ex=>{
       const bg=bgMap[ex.category]||"#f8fafc";
       const col=colMap[ex.category]||"#374151";
-      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:280px;object-fit:contain;border-radius:8px;margin:10px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:none;object-fit:contain;border-radius:8px;margin:10px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
       const stars=ex.rating>0?"★".repeat(ex.rating)+"☆".repeat(5-ex.rating):"";
       return `
         <div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:20px;overflow:hidden;page-break-inside:avoid">
@@ -1590,7 +1590,7 @@ function ManualTrainingPlanner({exercises,players,coachesList=[],onClose,onSaveS
 
     const exBlock=(ex)=>{
       if(!ex) return `<p style="color:#9ca3af;font-style:italic;margin:4px 0">Freie Übung / vor Ort bestimmen</p>`;
-      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:220px;object-fit:contain;border-radius:6px;margin:8px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:none;object-fit:contain;border-radius:6px;margin:8px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
       return `${img}
         ${ex.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin:6px 0;border-left:3px solid #94a3b8"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">📐 Aufbau</span><br><span style="font-size:13px;line-height:1.6">${esc(ex.setup)}</span></div>`:""}
         ${ex.description?`<div style="margin:6px 0"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">🎯 Ablauf</span><br><p style="font-size:13px;line-height:1.7;margin:4px 0">${esc(ex.description)}</p></div>`:""}
@@ -1993,7 +1993,7 @@ function printSession(s,exercises,toast) {
     const colMap={ankommen:"#475569",aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
     const exBlock=(ex)=>{
       if(!ex) return`<p style="color:#9ca3af;font-style:italic;margin:4px 0">Freie Übung</p>`;
-      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:220px;object-fit:contain;border-radius:6px;margin:8px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:none;object-fit:contain;border-radius:6px;margin:8px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
       return`${img}${ex.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin:6px 0;border-left:3px solid #94a3b8"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">📐 Aufbau</span><br><span style="font-size:13px;line-height:1.6">${esc(ex.setup)}</span></div>`:""}${ex.description?`<div style="margin:6px 0"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">🎯 Ablauf</span><br><p style="font-size:13px;line-height:1.7;margin:4px 0">${esc(ex.description)}</p></div>`:""}${ex.material?.length?`<div style="font-size:12px;color:#6b7280;margin:4px 0">📦 ${esc(ex.material.join(", "))}</div>`:""}${ex.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic;margin-top:6px">💡 ${esc(ex.notes)}</div>`:""}`;
     };
     // Collect all materials across all phases
@@ -2035,7 +2035,7 @@ function printSession(s,exercises,toast) {
   const colMap={aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
   const exHtml=ex.map(e=>{
     const bg=bgMap[e.category]||"#f8fafc";const col=colMap[e.category]||"#374151";
-    const img=e.imageUrl?`<img src="${e.imageUrl}" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px;margin:8px 0;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+    const img=e.imageUrl?`<img src="${e.imageUrl}" style="width:100%;max-height:none;object-fit:contain;border-radius:6px;margin:8px 0;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
     return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid"><div style="background:${bg};padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:16px">${esc(CATS[e.category]?.emoji||"📋")}</span><span style="font-weight:800;font-size:15px;color:${col};flex:1">${esc(e.title)}</span>${e.duration?`<span style="font-size:12px;color:#64748b">⏱ ${e.duration} Min</span>`:""}</div><div style="padding:12px 16px">${img}${e.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin-bottom:8px;border-left:3px solid #94a3b8"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">📐 Aufbau</div><div style="font-size:13px;line-height:1.6">${esc(e.setup)}</div></div>`:""}${e.description?`<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">🎯 Ablauf</div><div style="font-size:13px;line-height:1.7">${esc(e.description)}</div></div>`:""}${e.material?.length?`<div style="font-size:12px;color:#6b7280;margin-bottom:4px">📦 ${esc(e.material.join(", "))}</div>`:""}${e.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic">💡 ${esc(e.notes)}</div>`:""}</div></div>`;
   }).join("");
   const teamsHtml=(s.teams||[]).length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;page-break-inside:avoid"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">${(s.teams||[]).map(t=>`<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
