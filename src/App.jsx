@@ -1549,105 +1549,74 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     const bgMap={ankommen:"#f1f5f9",aufwaermen:"#fff3e0",koordination:"#f3e8ff",technik:"#e8f0fe",spielform:"#e8f5e9",abschluss:"#fce4ec"};
     const colMap={ankommen:"#475569",aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
 
-    const exBlock=(ex,label)=>{
-      if(!ex) return `<p style="color:#9ca3af;font-style:italic">Keine Übung in Bibliothek</p>`;
-      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:180px;object-fit:contain;border-radius:6px;margin:8px 0;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:""
-      return `
-        <div style="margin-bottom:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <strong style="font-size:15px">${esc(ex.title)}</strong>
-          <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#eff6ff;color:#1d4ed8;font-weight:700">${esc(CATS[ex.category]?.emoji)} ${esc(CATS[ex.category]?.label||ex.category)}</span>
-          ${ex.duration?`<span style="font-size:11px;color:#6b7280">⏱ ${ex.duration} Min</span>`:""}
-          ${ex.minPlayers?`<span style="font-size:11px;color:#6b7280">👥 ${ex.minPlayers}–${ex.maxPlayers} Kinder</span>`:""}
-        </div>
-        ${img}
-        ${ex.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin:6px 0;border-left:3px solid #94a3b8"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px">📐 Aufbau</span><br><span style="font-size:13px;line-height:1.6">${esc(ex.setup)}</span></div>`:""}
-        ${ex.description?`<div style="margin:6px 0"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px">🎯 Ablauf</span><br><p style="font-size:13px;line-height:1.7;margin:4px 0">${esc(ex.description)}</p></div>`:""}
-        ${ex.material?.length?`<div style="margin:4px 0;font-size:12px;color:#6b7280">📦 Material: ${esc(ex.material.join(", "))}</div>`:""}
-        ${ex.notes?`<div style="margin:6px 0;padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic">💡 ${esc(ex.notes)}</div>`:""}
-      `;
+    const exBlock=(ex)=>{
+      if(!ex) return `<p style="color:#9ca3af;font-style:italic;margin:4px 0">Freie Übung / vor Ort bestimmen</p>`;
+      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:220px;object-fit:contain;border-radius:6px;margin:8px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+      return `${img}
+        ${ex.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin:6px 0;border-left:3px solid #94a3b8"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">📐 Aufbau</span><br><span style="font-size:13px;line-height:1.6">${esc(ex.setup)}</span></div>`:""}
+        ${ex.description?`<div style="margin:6px 0"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">🎯 Ablauf</span><br><p style="font-size:13px;line-height:1.7;margin:4px 0">${esc(ex.description)}</p></div>`:""}
+        ${ex.material?.length?`<div style="font-size:12px;color:#6b7280;margin:4px 0">📦 ${esc(ex.material.join(", "))}</div>`:""}
+        ${ex.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic;margin-top:6px">💡 ${esc(ex.notes)}</div>`:""}`;
     };
+
+    // Timeline overview
+    let cursor=0;
+    const tl=[];
+    plan.phases.forEach((ph,i)=>{
+      tl.push({label:`${ph.block.emoji} ${esc(ph.block.label)}`,min:ph.minutes,col:colMap[ph.block.cat||ph.block.key]||"#374151"});
+      cursor+=ph.minutes;
+      if(i<plan.phases.length-1&&plan.breakMin>0&&!ph.isFree){tl.push({label:"⏸",min:plan.breakMin,col:"#94a3b8"});cursor+=plan.breakMin;}
+    });
+    const timelineHtml=`<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:20px;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0">
+      ${tl.map(t=>`<span style="padding:3px 10px;border-radius:20px;background:${t.col}18;border:1px solid ${t.col}33;font-size:12px;font-weight:700;color:${t.col}">${t.label} ${t.min}m</span>`).join('<span style="color:#cbd5e1;font-size:12px"> → </span>')}
+      <span style="margin-left:auto;font-size:12px;color:#6b7280">= ${cursor} / ${plan.totalMin} Min</span>
+    </div>`;
 
     const rows=plan.phases.map((ph,i)=>{
       const bg=bgMap[ph.block.cat||ph.block.key]||"#f8fafc";
       const col=colMap[ph.block.cat||ph.block.key]||"#374151";
+      const kidsLabel=typeof ph.kids==="number"?`${ph.kids} Kinder`:ph.kids;
       let body="";
       if(ph.isFree){
-        body=`<div style="padding:10px 14px;font-size:13px;color:#475569">
-          <p style="margin:0">⚽ <strong>Kinder spielen frei</strong> — kein Trainer-Input nötig.</p>
-          <p style="margin:6px 0 0;padding:6px 10px;background:#faf5ff;border-radius:6px;color:#6d28d9;font-size:12px">🧑‍🏫 Trainer nutzen diese ${ph.minutes} Min zum Aufbau der nächsten Station.</p>
+        body=`<div style="padding:12px 14px">
+          <p style="margin:0 0 6px;font-size:14px">⚽ <strong>Kinder spielen frei</strong> — kein Trainer-Input nötig.</p>
+          <p style="margin:0;padding:8px 12px;background:#faf5ff;border-radius:6px;color:#6d28d9;font-size:13px">🧑‍🏫 Trainer nutzen diese <strong>${ph.minutes} Min</strong> zum Aufbau der nächsten Station.</p>
         </div>`;
       } else if(ph.stations){
-        const rot=ph.stations?Math.floor(ph.minutes/ph.stations.length):Math.floor(ph.minutes/2);
-        body=`<div style="padding:8px 14px 2px;font-size:12px;color:#7c3aed;font-weight:700;background:#faf5ff;border-bottom:1px solid #e9d5ff">
-          🔄 Rotation nach ${rot} Min (Pfiff) — ${ph.block.stations} Gruppen wechseln im Uhrzeigersinn
+        const rot=Math.floor(ph.minutes/ph.stations.length);
+        const swaps=ph.stations.length-1;
+        body=`<div style="padding:8px 14px;background:#faf5ff;border-bottom:1px solid #e9d5ff">
+          <strong style="font-size:13px;color:#7c3aed">🔄 ${ph.stations.length} Stationen parallel</strong>
+          <span style="font-size:12px;color:#6d28d9;margin-left:8px">Rotation alle <strong>${rot} Min</strong> · ${swaps}× wechseln · ${ph.minutes} Min gesamt</span>
         </div>`;
         body+=ph.stations.map((st,j)=>`
-          <div style="padding:12px 14px;border-top:1px solid #e5e7eb${j>0?";page-break-inside:avoid":""}">
-            <div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:8px">📍 ${esc(st.label)} · ${st.kids} Kinder</div>
-            ${exBlock(st.exercise,st.label)}
+          <div style="padding:12px 14px;border-top:1px solid #f1f5f9;page-break-inside:avoid">
+            <div style="font-weight:800;font-size:14px;color:#1d4ed8;margin-bottom:8px">📍 ${esc(st.label)} · ${st.kids} Kinder${st.exercise?" — "+esc(st.exercise.title):""}</div>
+            ${exBlock(st.exercise)}
           </div>`).join("");
-        body+=`<div style="padding:6px 14px;background:#fef9c3;font-size:12px;color:#92400e;font-weight:600">⏱ Nach ${rot} Min: Pfiff → alle Gruppen rücken eine Station weiter</div>`;
+        body+=`<div style="padding:8px 14px;background:#fef9c3;border-top:1px solid #fde047;font-size:12px;color:#92400e;font-weight:600">⏱ Zeitplan: ${Array.from({length:ph.stations.length},(_, i)=>`${i*rot}–${(i+1)*rot} Min → Station ${i+1}`).join(" → ")}</div>`;
       } else {
-        body=`<div style="padding:12px 14px">${exBlock(ph.exercise,ph.block.label)}</div>`;
+        body=`<div style="padding:12px 14px">${ph.exercise?`<div style="font-weight:800;font-size:15px;color:#111;margin-bottom:8px">${esc(ph.exercise.title)}</div>${exBlock(ph.exercise)}`:`<p style="color:#9ca3af;font-style:italic">Freie Übung / vor Ort bestimmen</p>`}</div>`;
       }
-      return `
-        <div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid">
-          <div style="background:${bg};padding:10px 16px;display:flex;justify-content:space-between;align-items:center">
-            <span style="font-weight:800;font-size:15px;color:${col}">${ph.block.emoji} ${esc(ph.block.label)}</span>
-            <span style="font-size:12px;color:#64748b;font-weight:600">⏱ ${ph.minutes} Min &nbsp;·&nbsp; 👥 ${ph.kids} Kinder</span>
-          </div>
-          ${body}
-        </div>`;
+      return `<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid">
+          <div style="background:${bg};padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+            <span style="font-weight:900;font-size:16px;color:${col}">${ph.block.emoji} ${esc(ph.block.label)}</span>
+            <span style="font-size:13px;color:#475569;font-weight:700">⏱ ${ph.minutes} Min &nbsp; 👥 ${kidsLabel}</span>
+          </div>${body}</div>`;
     }).join("");
 
-    const teamsHtml=planTeams.length?`
-      <div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;page-break-inside:avoid">
-        <div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:12px">
-          ${planTeams.map((t,i)=>`
-            <div style="border:1.5px solid #e2e8f0;border-radius:8px;padding:10px">
-              <div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>
-              ${t.players.map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}
-              ${t.players.length?`<div style="font-size:11px;color:#9ca3af;margin-top:4px">Ø ${(t.players.reduce((s,p)=>s+(p.strength||2),0)/t.players.length).toFixed(1)}</div>`:""}
-            </div>`).join("")}
-        </div>
-      </div>`:"";
+    const teamsHtml=planTeams.length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;page-break-inside:avoid"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:12px">${planTeams.map(t=>`<div style="border:1.5px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${t.players.map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
 
-    const css=`
-      *{box-sizing:border-box}
-      body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}
-      h1{font-size:24px;margin:0 0 4px;color:#111}
-      .meta{font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}
-      .footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}
-      img{max-width:100%}
-      @media print{
-        body{padding:12px}
-        @page{margin:1.5cm}
-      }
-    `;
-
-    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${plan.date||todayISO()}</title><style>${css}</style></head><body>
+    const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}h1{font-size:24px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%}@media print{body{padding:12px}@page{margin:1.5cm}}`;
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${esc(plan.date||todayISO())}</title><style>${css}</style></head><body>
       <h1>Trainingsplan</h1>
-      <div class="meta">
-        📅 ${esc(plan.date||todayISO())} &nbsp;·&nbsp; ⏱ ${plan.totalMin} Min &nbsp;·&nbsp; 👥 ${plan.kids} Kinder &nbsp;·&nbsp; 🧑‍🏫 ${plan.coaches} Trainer${plan.location?` &nbsp;·&nbsp; 📍 ${esc(plan.location)}`:""}
-      </div>
-      ${rows}
-      ${teamsHtml}
+      <div class="meta">📅 ${esc(plan.date||todayISO())} · ⏱ ${plan.totalMin} Min · 👥 ${plan.kids} Kinder · 🧑‍🏫 ${plan.coaches} Trainer${plan.location?` · 📍 ${esc(plan.location)}`:""}${plan.breakMin>0?` · ⏸ ${plan.breakMin} Min Pausen`:""}</div>
+      ${timelineHtml}${rows}${teamsHtml}
       <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
     </body></html>`;
-
     const w=window.open("","_blank");
-    if(w){
-      w.document.write(html);
-      w.document.close();
-      // Warte bis Bilder geladen sind, dann drucken
-      w.onload=()=>setTimeout(()=>w.print(),300);
-      setTimeout(()=>w.print(),800); // Fallback
-    } else {
-      // Popup geblockt → als HTML-Datei exportieren
-      saveFileSync(html,"Trainingsplan_"+todayISO()+".html","text/html");
-      toast("PDF: Trainingsplan als HTML gespeichert – im Browser öffnen und drucken");
-    }
+    if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
+    else{saveFileSync(html,"Trainingsplan_"+todayISO()+".html","text/html");toast("Als HTML gespeichert – im Browser öffnen und drucken");}
   };
 
   if(plan) return(
