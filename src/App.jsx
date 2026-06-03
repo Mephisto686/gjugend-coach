@@ -1498,8 +1498,29 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
   const [kids,setKids]=useState(setup?.kids||activeCount||10);
   const [coaches,setCoaches]=useState(setup?.coachCount||1);
   const [totalMin,setTotalMin]=useState(setup?.duration||60);
-  const [blocks,setBlocks]=useState(BLOCKS.map(b=>({...b,active:b.key!=="mittel2",parallel:false,stations:2,parallelExercises:{},pick:"random",exerciseId:null,minutes:b.defaultMin})));
-  const [breakMin,setBreakMin]=useState(2);
+  const [blocks,setBlocks]=useState(()=>{
+    const pd=setup?.planData;
+    if(pd?.phases){
+      // Restore blocks from saved planData
+      return BLOCKS.map(b=>{
+        const ph=pd.phases.find(p=>p.block?.key===b.key);
+        if(!ph) return {...b,active:false,parallel:false,stations:2,parallelExercises:{},pick:"random",exerciseId:null,minutes:b.defaultMin};
+        const parallelExercises={};
+        if(ph.stations) ph.stations.forEach((st,i)=>{ if(st.exercise?.id) parallelExercises[i]=st.exercise.id; });
+        return {...b,
+          active:true,
+          minutes:ph.minutes||b.defaultMin,
+          parallel:!!ph.stations,
+          stations:ph.stations?.length||2,
+          parallelExercises,
+          pick:ph.exercise?.id?"manual":"random",
+          exerciseId:ph.exercise?.id||null,
+        };
+      });
+    }
+    return BLOCKS.map(b=>({...b,active:b.key!=="mittel2",parallel:false,stations:2,parallelExercises:{},pick:"random",exerciseId:null,minutes:b.defaultMin}));
+  });
+  const [breakMin,setBreakMin]=useState(setup?.planData?.breakMin??2);
   const [plan,setPlan]=useState(null);
   const [planTeams,setPlanTeams]=useState([]);
   const [showTeamBuilder,setShowTeamBuilder]=useState(false);
@@ -1893,7 +1914,7 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
     {/* Actions */}
     <div style={{paddingTop:14,borderTop:`1px solid ${C.border}`}}>
       {(onReplan||onPrint)&&<div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-        {onReplan&&<Btn onClick={onReplan} style={{flex:1,justifyContent:"center"}}><RefreshCw size={14}/> Neu planen</Btn>}
+        {onReplan&&<Btn onClick={onReplan} style={{flex:1,justifyContent:"center"}}>✏️ Plan bearbeiten</Btn>}
         {onPrint&&<Btn onClick={onPrint} variant="secondary" style={{flex:1,justifyContent:"center"}}>🖨️ PDF erstellen</Btn>}
       </div>}
       <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
@@ -2116,7 +2137,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
       }} onSaveTeamset={onSaveTeamset} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession} onPrint={()=>printSession(modal.data,exercises,toast)} onReplan={()=>{
       const s=modal.data;
-      setModal({type:"setup",replaceId:s.id,setup:{kids:Number(s.participantCount)||players.filter(p=>p.active).length,coachCount:s.coachIds?.length||1,duration:s.duration||60,location:s.location==="Halle"?"indoor":"outdoor",date:s.date,playerIds:s.playerIds||[],coachIds:s.coachIds||[],focus:""}});
+      setModal({type:"manual",replaceId:s.id,setup:{kids:Number(s.participantCount)||players.filter(p=>p.active).length,coachCount:s.coachIds?.length||1,duration:s.duration||60,location:s.location==="Halle"?"indoor":"outdoor",date:s.date,playerIds:s.playerIds||[],coachIds:s.coachIds||[],focus:"",planData:s.planData||null}});
     }}/></Modal>}
     {modal?.type==="exDetail"&&modal.data&&<Modal title="Übungsdetail" onClose={()=>setModal(null)}><div><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}><CatBadge cat={modal.data.category}/><Stars value={modal.data.rating} readonly/><span style={{fontSize:13,color:C.muted,marginLeft:"auto"}}>⏱ {modal.data.duration} Min</span></div>{modal.data.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.setup}</div></div>}{modal.data.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.description}</div></div>}{modal.data.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{modal.data.material.map(m=><span key={m} style={{padding:"3px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div>}{modal.data.notes&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {modal.data.notes}</div>}</div></Modal>}
   </div>);
