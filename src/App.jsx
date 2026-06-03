@@ -7,7 +7,7 @@ const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 db.version(2).stores({ kv: 'key', teamsets: '++id,date' });
 
-const APP_VERSION = "3.8.0";
+const APP_VERSION = "3.8.1";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
