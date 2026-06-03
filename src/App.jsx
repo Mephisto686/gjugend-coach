@@ -7,7 +7,7 @@ const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 db.version(2).stores({ kv: 'key', teamsets: '++id,date' });
 
-const APP_VERSION = "3.7.3";
+const APP_VERSION = "3.8.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -1493,7 +1493,7 @@ const BLOCKS = [
   {key:"abschluss",   label:"Abschluss",          emoji:"🌅", cat:"abschluss",               defaultMin:5},
 ];
 
-function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,toast,setup,replaceId}) {
+function ManualTrainingPlanner({exercises,players,coaches=[],onClose,onSaveSession,apiKey,toast,setup,replaceId}) {
   const activeCount=players.filter(p=>p.active).length;
   const [kids,setKids]=useState(setup?.kids||activeCount||10);
   const [coaches,setCoaches]=useState(setup?.coachCount||1);
@@ -1505,17 +1505,8 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
       return BLOCKS.map(b=>{
         const ph=pd.phases.find(p=>p.block?.key===b.key);
         if(!ph) return {...b,active:false,parallel:false,stations:2,parallelExercises:{},pick:"random",exerciseId:null,minutes:b.defaultMin};
-        const parallelExercises={};
-        if(ph.stations) ph.stations.forEach((st,i)=>{ if(st.exercise?.id) parallelExercises[i]=st.exercise.id; });
-        return {...b,
-          active:true,
-          minutes:ph.minutes||b.defaultMin,
-          parallel:!!ph.stations,
-          stations:ph.stations?.length||2,
-          parallelExercises,
-          pick:ph.exercise?.id?"manual":"random",
-          exerciseId:ph.exercise?.id||null,
-        };
+        // ph.block contains the exact configuration used to generate this phase
+        return {...b,...ph.block,active:true,minutes:ph.minutes||b.defaultMin};
       });
     }
     return BLOCKS.map(b=>({...b,active:b.key!=="mittel2",parallel:false,stations:2,parallelExercises:{},pick:"random",exerciseId:null,minutes:b.defaultMin}));
@@ -1527,6 +1518,11 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
   const [tbNumTeams,setTbNumTeams]=useState(Math.max(2,Math.round((setup?.kids||kids||10)/3)));
   const [tbMode,setTbMode]=useState("balanced");
   const [tbSkill,setTbSkill]=useState({strong:0,weak:0});
+  // trainerAssignment: {blockKey: {stationIdx: coachId}}
+  const [trainerAssignment,setTrainerAssignment]=useState({});
+  const setStationTrainer=(blockKey,si,coachId)=>setTrainerAssignment(a=>({...a,[blockKey]:{...(a[blockKey]||{}),[si]:coachId}}));
+  // teamStationMap: {stationIdx: teamId} — which team starts at which station
+  const [teamStationMap,setTeamStationMap]=useState({});
 
   const setBlock=(key,field,val)=>setBlocks(bs=>bs.map(b=>b.key===key?{...b,[field]:val}:b));
   const activeBlocks=blocks.filter(b=>b.active);
@@ -1544,23 +1540,45 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
 
   const generate=()=>{
     const phases=activeBlocks.map(b=>{
-      if(b.fixedFree) return {block:b,exercise:null,stations:null,kids,minutes:b.minutes,isFree:true};
+      if(b.fixedFree) return {block:b,exercise:null,stations:null,
+        kidsTotal:kids,kidsPerStation:kids,minutes:b.minutes,isFree:true};
 
       let ex=null;
       if(b.pick==="random") ex=pickExercise(b.cat,null);
       else if(b.pick==="manual"&&b.exerciseId) ex=exercises.find(e=>e.id===b.exerciseId);
 
-      const kidsPerStation=b.parallel?Math.floor(kids/b.stations):kids;
-      const stations=b.parallel?Array.from({length:b.stations},(_,i)=>{
-        // Use manually picked exercise for this station if set, else random
-        const manualId=b.parallelExercises?.[i];
-        const stEx=manualId?exercises.find(e=>e.id===manualId):(pickExercise(b.cat, ex?.id)||ex);
-        return {label:`Station ${i+1}`,exercise:stEx,kids:kidsPerStation,manualId};
-      }):null;
+      if(b.parallel){
+        const kidsPerStation=Math.floor(kids/b.stations);
+        const remainder=kids-(kidsPerStation*b.stations); // leftover kids
+        // Pick distinct exercises per station (no duplicates)
+        const usedIds=new Set();
+        const stations=Array.from({length:b.stations},(_,i)=>{
+          const manualId=b.parallelExercises?.[i];
+          let stEx=null;
+          if(manualId){
+            stEx=exercises.find(e=>e.id===manualId);
+          } else {
+            // Pick random, avoid already used in this block
+            const pool=exercises.filter(e=>(!b.cat||e.category===b.cat)&&!usedIds.has(e.id));
+            stEx=pool.length?pool[Math.floor(Math.random()*pool.length)]:null;
+          }
+          if(stEx) usedIds.add(stEx.id);
+          return {label:`Gruppe ${i+1}`,exercise:stEx,
+            kids:kidsPerStation+(i<remainder?1:0), // distribute remainder kids
+            manualId:manualId||null};
+        });
+        const ta=trainerAssignment[b.key]||{};
+        const stationsWithTrainer=stations.map((st,i)=>({...st,
+          trainerId:ta[i]||null,
+          trainerName:ta[i]?(coaches.find(c=>c.id===ta[i])?.name||""):null}));
+        return {block:b,exercise:null,stations:stationsWithTrainer,
+          kidsTotal:kids,kidsPerStation,minutes:b.minutes};
+      }
 
-      return {block:b,exercise:ex,stations,kids:b.parallel?`${kidsPerStation}/Station`:kids,minutes:b.minutes};
+      return {block:b,exercise:ex,stations:null,
+        kidsTotal:kids,kidsPerStation:kids,minutes:b.minutes};
     });
-    setPlan({phases,kids,coaches,totalMin,breakMin,date:setup?.date||todayISO(),location:setup?.location||""});
+    setPlan({phases,kids,coaches,totalMin,breakMin,teamStationMap,date:setup?.date||todayISO(),location:setup?.location||""});
   };
 
   const phCol={ankommen:"#f8fafc",aufwaermen:"#fff7ed",koordination:"#f5f3ff",technik:"#eff6ff",spielform:"#f0fdf4",abschluss:"#fdf2f8"};
@@ -1596,7 +1614,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     const rows=plan.phases.map((ph,i)=>{
       const bg=bgMap[ph.block.cat||ph.block.key]||"#f8fafc";
       const col=colMap[ph.block.cat||ph.block.key]||"#374151";
-      const kidsLabel=typeof ph.kids==="number"?`${ph.kids} Kinder`:ph.kids;
+      const kidsLabel=ph.stations?`${ph.kidsPerStation}/Gruppe · ${ph.kidsTotal} gesamt`:`${ph.kidsTotal} Kinder`;
       let body="";
       if(ph.isFree){
         body=`<div style="padding:12px 14px">
@@ -1632,7 +1650,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
     const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${esc(plan.date||todayISO())}</title><style>${css}</style></head><body>
       <h1>Trainingsplan</h1>
       <div class="meta">📅 ${esc(plan.date||todayISO())} · ⏱ ${plan.totalMin} Min · 👥 ${plan.kids} Kinder · 🧑‍🏫 ${plan.coaches} Trainer${plan.location?` · 📍 ${esc(plan.location)}`:""}${plan.breakMin>0?` · ⏸ ${plan.breakMin} Min Pausen`:""}</div>
-      ${timelineHtml}${rows}${teamsHtml}
+      ${timelineHtml}${matHtml}${rows}${teamsHtml}
       <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
     </body></html>`;
     const w=window.open("","_blank");
@@ -1650,11 +1668,14 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
         {plan.phases.map((ph,i)=>{
           const showBreak=i<plan.phases.length-1&&!ph.isFree&&plan.breakMin>0;
           const bg=phCol[ph.block.cat||"ankommen"]||"#f8fafc";
-          const rotMin=ph.stations?Math.floor(ph.minutes/ph.block.stations):Math.floor(ph.minutes/2);
+          const rotMin=ph.stations?.length>0?Math.floor(ph.minutes/ph.stations.length):0;
           const phaseEl=(<div>
             <div style={{background:bg,padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{fontWeight:800,fontSize:14}}>{ph.block.emoji} {ph.block.label}</div>
-              <div style={{fontSize:12,color:C.muted,display:"flex",gap:10}}><span>⏱ {ph.minutes} Min</span><span>👥 {ph.kids} Kinder</span></div>
+              <div style={{fontSize:12,color:C.muted,display:"flex",gap:10}}>
+                <span>⏱ {ph.minutes} Min</span>
+                <span>👥 {ph.stations?`${ph.kidsPerStation}/Gruppe · ${ph.kidsTotal} gesamt`:ph.kidsTotal} Kinder</span>
+              </div>
             </div>
             <div style={{padding:"10px 14px"}}>
               {ph.isFree
@@ -1668,7 +1689,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {ph.stations.map((st,j)=><div key={j} style={{padding:"10px 12px",background:"#f8fafc",borderRadius:8,border:`1.5px solid ${C.border}`}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:4,flexWrap:"wrap"}}>
-                        <span style={{fontWeight:800,fontSize:13,color:C.primary}}>📍 {st.label} · {st.kids} Kinder</span>
+                        <span style={{fontWeight:800,fontSize:13,color:C.primary}}>📍 {st.label} · {st.kids} Kinder{st.trainerName?` · 🧑‍🏫 ${st.trainerName}`:""}</span>
                         {st.exercise&&<CatBadge cat={st.exercise.category} small/>}
                       </div>
                       {st.exercise
@@ -1710,7 +1731,7 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
         </div>
         {showTeamBuilder&&<div style={{background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px"}}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
-            <div><label style={{display:"block",fontSize:11,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Anzahl Teams</label><Stepper value={tbNumTeams} onChange={setTbNumTeams} min={2} max={12}/><div style={{fontSize:11,color:C.muted,marginTop:3}}>≈ {Math.round(plan.kids/tbNumTeams)} Kinder/Team</div></div>
+            <div><label style={{display:"block",fontSize:11,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Anzahl Teams</label><Stepper value={tbNumTeams} onChange={setTbNumTeams} min={2} max={12}/><div style={{fontSize:11,color:C.muted,marginTop:3}}>≈ {Math.round((plan.kids||plan.phases?.[0]?.kidsTotal||10)/tbNumTeams)} Kinder/Team</div></div>
             <div><label style={{display:"block",fontSize:11,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label>
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 {[["balanced","⚖️ Ausgeglichen"],["random","🎲 Zufällig"],["skill","📊 Stärke-Gruppen"],["mixed","🎨 Durchmischt"]].map(([k,l])=><button key={k} onClick={()=>setTbMode(k)} style={{padding:"5px 8px",borderRadius:7,border:`1.5px solid ${tbMode===k?C.primary:C.border}`,background:tbMode===k?C.accentL:"white",color:tbMode===k?C.primary:C.muted,cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"inherit",textAlign:"left"}}>{l}</button>)}
@@ -1738,12 +1759,34 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
         </div>}
       </div>
 
+      {/* Team → Station Zuweisung */}
+      {planTeams.length>0&&plan.phases.some(ph=>ph.stations)&&<div style={{marginBottom:16,background:"#f0f9ff",borderRadius:10,border:"1px solid #bae6fd",padding:"12px 14px"}}>
+        <div style={{fontWeight:700,fontSize:13,color:"#0369a1",marginBottom:8}}>🏁 Welches Team startet wo?</div>
+        {plan.phases.filter(ph=>ph.stations).map((ph,pi)=>(
+          <div key={pi} style={{marginBottom:pi<plan.phases.filter(p=>p.stations).length-1?10:0}}>
+            {plan.phases.filter(p=>p.stations).length>1&&<div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:5}}>{ph.block.label}</div>}
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              {ph.stations.map((st,si)=>(
+                <div key={si} style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:12,fontWeight:700,minWidth:70,color:C.primary}}>📍 {st.label}</span>
+                  <select value={teamStationMap[`${pi}-${si}`]||""} onChange={e=>setTeamStationMap(m=>({...m,[`${pi}-${si}`]:e.target.value}))} style={{flex:1,padding:"5px 10px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none"}}>
+                    <option value="">— Team zuweisen —</option>
+                    {planTeams.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  {st.trainerName&&<span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>🧑‍🏫 {st.trainerName}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>}
+
       <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${C.border}`}}>
         <Btn onClick={()=>setPlan(null)} variant="secondary">✏️ Bearbeiten</Btn>
         <Btn onClick={printPlan} variant="secondary">🖨️ PDF / Drucken</Btn>
         <Btn onClick={()=>{
           const exIds=[...new Set(plan.phases.flatMap(ph=>ph.stations?ph.stations.map(s=>s.exercise?.id).filter(Boolean):[ph.exercise?.id].filter(Boolean)))];
-          onSaveSession({id:replaceId||uid(),createdAt:now(),date:plan.date||todayISO(),duration:plan.totalMin,location:plan.location||"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:planTeams,planData:{phases:plan.phases,kids:plan.kids,coaches:plan.coaches,totalMin:plan.totalMin,breakMin:plan.breakMin,date:plan.date,location:plan.location},notes:`Manuell geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
+          onSaveSession({id:replaceId||uid(),createdAt:now(),date:plan.date||todayISO(),duration:plan.totalMin,location:plan.location||"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:planTeams,planData:{phases:plan.phases,kids:plan.kids,coaches:plan.coaches,totalMin:plan.totalMin,breakMin:plan.breakMin,teamStationMap:plan.teamStationMap,date:plan.date,location:plan.location},notes:`Manuell geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
           toast("Training gespeichert ✓");
           onClose();
         }}><CalendarDays size={14}/> Speichern</Btn>
@@ -1807,17 +1850,21 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
                 </div>
               </div>
               {b.parallel&&<div style={{display:"flex",flexDirection:"column",gap:6,paddingTop:8,borderTop:`1px dashed ${C.border}`}}>
-                <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Übung pro Gruppe (leer = zufällig aus Bibliothek)</div>
+                <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Übung + Trainer pro Gruppe</div>
                 {Array.from({length:b.stations},(_,si)=>(
-                  <div key={si} style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:12,fontWeight:700,color:C.primary,minWidth:60}}>Gruppe {si+1}</span>
-                    <select value={b.parallelExercises?.[si]||""} onChange={e=>setParallelEx(b.key,si,e.target.value)} style={{flex:1,padding:"5px 10px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,outline:"none"}}>
-                      <option value="">🎲 Zufällig aus Bibliothek</option>
+                  <div key={si} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:12,fontWeight:800,color:C.primary,minWidth:64}}>Gruppe {si+1}</span>
+                    <select value={b.parallelExercises?.[si]||""} onChange={e=>setParallelEx(b.key,si,e.target.value)} style={{flex:2,minWidth:120,padding:"5px 8px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:12,outline:"none"}}>
+                      <option value="">🎲 Zufällig</option>
                       {exercises.sort((a,b)=>(CATS[a.category]?.label||"").localeCompare(CATS[b.category]?.label||"")).map(e=><option key={e.id} value={e.id}>{CATS[e.category]?.emoji||""} [{CATS[e.category]?.label||e.category}] {e.title}</option>)}
                     </select>
+                    {coaches.length>0&&<select value={trainerAssignment[b.key]?.[si]||""} onChange={e=>setStationTrainer(b.key,si,e.target.value)} style={{flex:1,minWidth:80,padding:"5px 8px",border:`1.5px solid ${trainerAssignment[b.key]?.[si]?C.primary:C.border}`,borderRadius:8,fontSize:12,outline:"none",color:trainerAssignment[b.key]?.[si]?C.primary:C.muted}}>
+                      <option value="">🧑‍🏫 Trainer</option>
+                      {coaches.filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>}
                   </div>
                 ))}
-                <div style={{fontSize:11,color:"#7c3aed",fontStyle:"italic"}}>↔ Rotation nach {Math.floor(b.minutes/b.stations)} Min · {b.stations-1}× tauschen damit alle jede Station hatten</div>
+                <div style={{fontSize:11,color:"#7c3aed",fontStyle:"italic"}}>↔ Rotation nach {Math.floor(b.minutes/b.stations)} Min · {b.stations-1}× tauschen damit alle jede Gruppe hatten</div>
               </div>}
             </div>}
         </div>}
@@ -1949,19 +1996,26 @@ function printSession(s,exercises,toast) {
       const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:220px;object-fit:contain;border-radius:6px;margin:8px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
       return`${img}${ex.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin:6px 0;border-left:3px solid #94a3b8"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">📐 Aufbau</span><br><span style="font-size:13px;line-height:1.6">${esc(ex.setup)}</span></div>`:""}${ex.description?`<div style="margin:6px 0"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">🎯 Ablauf</span><br><p style="font-size:13px;line-height:1.7;margin:4px 0">${esc(ex.description)}</p></div>`:""}${ex.material?.length?`<div style="font-size:12px;color:#6b7280;margin:4px 0">📦 ${esc(ex.material.join(", "))}</div>`:""}${ex.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic;margin-top:6px">💡 ${esc(ex.notes)}</div>`:""}`;
     };
+    // Collect all materials across all phases
+    const matCount={};
+    fakePlan.phases.forEach(ph=>{
+      const exs=ph.stations?ph.stations.map(st=>st.exercise).filter(Boolean):[ph.exercise].filter(Boolean);
+      exs.forEach(ex=>(ex.material||[]).forEach(m=>{const k=m.trim().toLowerCase();matCount[k]=(matCount[k]||0)+1;}));
+    });
+    const matHtml=Object.keys(matCount).length?`<div style="margin-bottom:20px;padding:12px 16px;background:#fefce8;border-radius:10px;border:1.5px solid #fde047"><div style="font-weight:800;font-size:14px;color:#854d0e;margin-bottom:8px">📦 Material (Gesamtliste)</div><div style="display:flex;flex-wrap:wrap;gap:6px">${Object.entries(matCount).sort((a,b)=>b[1]-a[1]).map(([m,c])=>`<span style="padding:3px 10px;border-radius:20px;background:#fef9c3;border:1px solid #fde047;font-size:13px;color:#92400e">${m}${c>1?` (×${c})`:""}</span>`).join("")}</div></div>`:"";
     let cur=0;const tl=[];
     fakePlan.phases.forEach((ph,i)=>{tl.push({label:`${ph.block.emoji} ${esc(ph.block.label)}`,min:ph.minutes,col:colMap[ph.block.cat||ph.block.key]||"#374151"});cur+=ph.minutes;if(i<fakePlan.phases.length-1&&fakePlan.breakMin>0&&!ph.isFree){tl.push({label:"⏸",min:fakePlan.breakMin,col:"#94a3b8"});cur+=fakePlan.breakMin;}});
     const tlHtml=`<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:20px;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0">${tl.map(t=>`<span style="padding:3px 10px;border-radius:20px;background:${t.col}18;border:1px solid ${t.col}33;font-size:12px;font-weight:700;color:${t.col}">${t.label} ${t.min}m</span>`).join('<span style="color:#cbd5e1;font-size:12px"> → </span>')}<span style="margin-left:auto;font-size:12px;color:#6b7280">= ${cur} / ${fakePlan.totalMin} Min</span></div>`;
     const rows=fakePlan.phases.map(ph=>{
       const bg=bgMap[ph.block.cat||ph.block.key]||"#f8fafc";const col=colMap[ph.block.cat||ph.block.key]||"#374151";
-      const kidsLabel=typeof ph.kids==="number"?`${ph.kids} Kinder`:ph.kids;
+      const kidsLabel=ph.stations?`${ph.kidsPerStation}/Gruppe · ${ph.kidsTotal} gesamt`:`${ph.kidsTotal} Kinder`;
       let body="";
       if(ph.isFree){body=`<div style="padding:12px 14px"><p style="margin:0 0 6px;font-size:14px">⚽ <strong>Kinder spielen frei</strong></p><p style="margin:0;padding:8px 12px;background:#faf5ff;border-radius:6px;color:#6d28d9;font-size:13px">🧑‍🏫 Trainer: <strong>${ph.minutes} Min</strong> Aufbau der nächsten Station.</p></div>`;}
       else if(ph.stations){
         const rot=Math.floor(ph.minutes/ph.stations.length);const swaps=ph.stations.length-1;
         body=`<div style="padding:8px 14px;background:#faf5ff;border-bottom:1px solid #e9d5ff"><strong style="font-size:13px;color:#7c3aed">🔄 ${ph.stations.length} Stationen parallel</strong><span style="font-size:12px;color:#6d28d9;margin-left:8px">· alle <strong>${rot} Min</strong> wechseln · ${swaps}× · ${ph.minutes} Min gesamt</span></div>`;
-        body+=ph.stations.map((st,j)=>`<div style="padding:12px 14px;border-top:1px solid #f1f5f9;page-break-inside:avoid"><div style="font-weight:800;font-size:14px;color:#1d4ed8;margin-bottom:8px">📍 ${esc(st.label)} · ${st.kids} Kinder${st.exercise?" — "+esc(st.exercise.title):""}</div>${exBlock(st.exercise)}</div>`).join("");
-        body+=`<div style="padding:8px 14px;background:#fef9c3;border-top:1px solid #fde047;font-size:12px;color:#92400e;font-weight:600">⏱ ${Array.from({length:ph.stations.length},(_,i)=>`${i*rot}–${(i+1)*rot} Min → Station ${i+1}`).join(" → ")}</div>`;
+        body+=ph.stations.map((st,j)=>`<div style="padding:12px 14px;border-top:1px solid #f1f5f9;page-break-inside:avoid"><div style="font-weight:800;font-size:14px;color:#1d4ed8;margin-bottom:6px">📍 ${esc(st.label)} · ${st.kids} Kinder${st.trainerName?` · 🧑‍🏫 ${esc(st.trainerName)}`:""}</div>${st.exercise?`<div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:6px">⚽ ${esc(st.exercise.title)}</div>`:""}${exBlock(st.exercise)}</div>`).join("");
+        body+=`<div style="padding:8px 14px;background:#fef9c3;border-top:1px solid #fde047;font-size:12px;color:#92400e;font-weight:600">⏱ Zeitplan: ${Array.from({length:ph.stations.length},(_,i)=>`${i*rot}–${(i+1)*rot} Min → Gruppe ${i+1}`).join(" → ")}</div>`;
       } else {body=`<div style="padding:12px 14px">${ph.exercise?`<div style="font-weight:800;font-size:15px;color:#111;margin-bottom:8px">${esc(ph.exercise.title)}</div>${exBlock(ph.exercise)}`:`<p style="color:#9ca3af;font-style:italic">Freie Übung</p>`}</div>`;}
       return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid"><div style="background:${bg};padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span style="font-weight:900;font-size:16px;color:${col}">${ph.block.emoji} ${esc(ph.block.label)}</span><span style="font-size:13px;color:#475569;font-weight:700">⏱ ${ph.minutes} Min &nbsp; 👥 ${kidsLabel}</span></div>${body}</div>`;
     }).join("");
@@ -2122,7 +2176,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
     </div>}
     {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="setup"&&<Modal title={modal.replaceId?"Training neu planen":"Training planen"} onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} initialSetup={modal.setup} onClose={()=>setModal(null)} onPlanManual={setup=>setModal({type:"manual",setup,replaceId:modal.replaceId})} onPlanKI={setup=>setModal({type:"ai",setup,replaceId:modal.replaceId})}/></Modal>}
-    {modal?.type==="manual"&&<Modal title={modal.replaceId?"📋 Neu planen":"📋 Manuell planen"} onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
+    {modal?.type==="manual"&&<Modal title={modal.replaceId?"📋 Neu planen":"📋 Manuell planen"} onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} coaches={coaches} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
     {modal?.type==="ai"&&<Modal title={modal.replaceId?"🤖 Neu planen (KI)":"🤖 KI-Trainingsplan"} onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
     {modal?.type==="shareTeams"&&modal.teamset&&<Modal title="Teams teilen" onClose={()=>setModal(null)} wide><ShareTeamsModal teamset={modal.teamset} onClose={()=>setModal(null)} toast={toast}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
