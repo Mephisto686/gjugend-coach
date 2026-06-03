@@ -1493,7 +1493,7 @@ const BLOCKS = [
   {key:"abschluss",   label:"Abschluss",          emoji:"🌅", cat:"abschluss",               defaultMin:5},
 ];
 
-function ManualTrainingPlanner({exercises,players,coaches=[],onClose,onSaveSession,apiKey,toast,setup,replaceId}) {
+function ManualTrainingPlanner({exercises,players,coachesList=[],onClose,onSaveSession,apiKey,toast,setup,replaceId}) {
   const activeCount=players.filter(p=>p.active).length;
   const [kids,setKids]=useState(setup?.kids||activeCount||10);
   const [coaches,setCoaches]=useState(setup?.coachCount||1);
@@ -1570,7 +1570,7 @@ function ManualTrainingPlanner({exercises,players,coaches=[],onClose,onSaveSessi
         const ta=trainerAssignment[b.key]||{};
         const stationsWithTrainer=stations.map((st,i)=>({...st,
           trainerId:ta[i]||null,
-          trainerName:ta[i]?(coaches.find(c=>c.id===ta[i])?.name||""):null}));
+          trainerName:ta[i]?(coachesList.find(c=>c.id===ta[i])?.name||""):null}));
         return {block:b,exercise:null,stations:stationsWithTrainer,
           kidsTotal:kids,kidsPerStation,minutes:b.minutes};
       }
@@ -1858,9 +1858,9 @@ function ManualTrainingPlanner({exercises,players,coaches=[],onClose,onSaveSessi
                       <option value="">🎲 Zufällig</option>
                       {exercises.sort((a,b)=>(CATS[a.category]?.label||"").localeCompare(CATS[b.category]?.label||"")).map(e=><option key={e.id} value={e.id}>{CATS[e.category]?.emoji||""} [{CATS[e.category]?.label||e.category}] {e.title}</option>)}
                     </select>
-                    {coaches.length>0&&<select value={trainerAssignment[b.key]?.[si]||""} onChange={e=>setStationTrainer(b.key,si,e.target.value)} style={{flex:1,minWidth:80,padding:"5px 8px",border:`1.5px solid ${trainerAssignment[b.key]?.[si]?C.primary:C.border}`,borderRadius:8,fontSize:12,outline:"none",color:trainerAssignment[b.key]?.[si]?C.primary:C.muted}}>
+                    {coachesList.length>0&&<select value={trainerAssignment[b.key]?.[si]||""} onChange={e=>setStationTrainer(b.key,si,e.target.value)} style={{flex:1,minWidth:80,padding:"5px 8px",border:`1.5px solid ${trainerAssignment[b.key]?.[si]?C.primary:C.border}`,borderRadius:8,fontSize:12,outline:"none",color:trainerAssignment[b.key]?.[si]?C.primary:C.muted}}>
                       <option value="">🧑‍🏫 Trainer</option>
-                      {coaches.filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                      {coachesList.filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>}
                   </div>
                 ))}
@@ -2176,7 +2176,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
     </div>}
     {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="setup"&&<Modal title={modal.replaceId?"Training neu planen":"Training planen"} onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} initialSetup={modal.setup} onClose={()=>setModal(null)} onPlanManual={setup=>setModal({type:"manual",setup,replaceId:modal.replaceId})} onPlanKI={setup=>setModal({type:"ai",setup,replaceId:modal.replaceId})}/></Modal>}
-    {modal?.type==="manual"&&<Modal title={modal.replaceId?"📋 Neu planen":"📋 Manuell planen"} onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} coaches={coaches} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
+    {modal?.type==="manual"&&<Modal title={modal.replaceId?"📋 Neu planen":"📋 Manuell planen"} onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} coachesList={coaches} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
     {modal?.type==="ai"&&<Modal title={modal.replaceId?"🤖 Neu planen (KI)":"🤖 KI-Trainingsplan"} onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
     {modal?.type==="shareTeams"&&modal.teamset&&<Modal title="Teams teilen" onClose={()=>setModal(null)} wide><ShareTeamsModal teamset={modal.teamset} onClose={()=>setModal(null)} toast={toast}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
