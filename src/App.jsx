@@ -7,7 +7,7 @@ const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 db.version(2).stores({ kv: 'key', teamsets: '++id,date' });
 
-const APP_VERSION = "3.8.9";
+const APP_VERSION = "3.9.0";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -186,12 +186,31 @@ ${ex.tags?.length?`<div class="sec"><h2>🏷️ Tags</h2><div class="chips">${ex
 ${ex.notes?`<div class="sec"><h2>💬 Notizen & Varianten</h2><div class="box" style="font-style:italic">${ex.notes}</div></div>`:''}
 <div class="footer">G-Jugend Coach v${APP_VERSION} · Erstellt: ${new Date().toLocaleDateString('de-DE')}</div>
 <script>
-window.addEventListener("load",function(){
-  document.querySelectorAll("img").forEach(function(img){
-    function fix(){if(img.naturalWidth>0)img.style.height=(img.offsetWidth*img.naturalHeight/img.naturalWidth)+"px";}
-    if(img.complete)fix();else img.addEventListener("load",fix);
-  });
-});
+(function(){
+  var MAX_H=500; // px - fits safely on A4 at any DPR
+  function fixImg(img){
+    if(!img.naturalWidth||!img.naturalHeight)return;
+    var ratio=img.naturalHeight/img.naturalWidth;
+    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
+    var h=maxW*ratio;
+    var w=maxW;
+    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
+    img.style.width=w+"px";
+    img.style.height=h+"px";
+    img.style.maxWidth="100%";
+    img.style.display="block";
+    img.style.objectFit="contain";
+    img.style.background="#f8fafc";
+    img.style.margin="0 auto 8px";
+  }
+  function run(){document.querySelectorAll("img").forEach(function(img){
+    if(img.complete&&img.naturalWidth>0)fixImg(img);
+    else img.addEventListener("load",function(){fixImg(img);});
+  });}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
+  else run();
+  window.addEventListener("load",run);
+})();
 </script></body></html>`;
 };
 
@@ -811,12 +830,31 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
       ${exHtml}
       <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
     <script>
-window.addEventListener("load",function(){
-  document.querySelectorAll("img").forEach(function(img){
-    function fix(){if(img.naturalWidth>0)img.style.height=(img.offsetWidth*img.naturalHeight/img.naturalWidth)+"px";}
-    if(img.complete)fix();else img.addEventListener("load",fix);
-  });
-});
+(function(){
+  var MAX_H=500; // px - fits safely on A4 at any DPR
+  function fixImg(img){
+    if(!img.naturalWidth||!img.naturalHeight)return;
+    var ratio=img.naturalHeight/img.naturalWidth;
+    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
+    var h=maxW*ratio;
+    var w=maxW;
+    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
+    img.style.width=w+"px";
+    img.style.height=h+"px";
+    img.style.maxWidth="100%";
+    img.style.display="block";
+    img.style.objectFit="contain";
+    img.style.background="#f8fafc";
+    img.style.margin="0 auto 8px";
+  }
+  function run(){document.querySelectorAll("img").forEach(function(img){
+    if(img.complete&&img.naturalWidth>0)fixImg(img);
+    else img.addEventListener("load",function(){fixImg(img);});
+  });}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
+  else run();
+  window.addEventListener("load",run);
+})();
 </script></body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
@@ -1667,12 +1705,31 @@ function ManualTrainingPlanner({exercises,players,coachesList=[],onClose,onSaveS
       ${timelineHtml}${matHtml}${rows}${teamsHtml}
       <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
     <script>
-window.addEventListener("load",function(){
-  document.querySelectorAll("img").forEach(function(img){
-    function fix(){if(img.naturalWidth>0)img.style.height=(img.offsetWidth*img.naturalHeight/img.naturalWidth)+"px";}
-    if(img.complete)fix();else img.addEventListener("load",fix);
-  });
-});
+(function(){
+  var MAX_H=500; // px - fits safely on A4 at any DPR
+  function fixImg(img){
+    if(!img.naturalWidth||!img.naturalHeight)return;
+    var ratio=img.naturalHeight/img.naturalWidth;
+    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
+    var h=maxW*ratio;
+    var w=maxW;
+    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
+    img.style.width=w+"px";
+    img.style.height=h+"px";
+    img.style.maxWidth="100%";
+    img.style.display="block";
+    img.style.objectFit="contain";
+    img.style.background="#f8fafc";
+    img.style.margin="0 auto 8px";
+  }
+  function run(){document.querySelectorAll("img").forEach(function(img){
+    if(img.complete&&img.naturalWidth>0)fixImg(img);
+    else img.addEventListener("load",function(){fixImg(img);});
+  });}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
+  else run();
+  window.addEventListener("load",run);
+})();
 </script></body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
@@ -2043,12 +2100,31 @@ function printSession(s,exercises,toast) {
     const teamsHtml2=fakeTeams.length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">${fakeTeams.map(t=>`<div style="border:1.5px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
     const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}h1{font-size:24px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%;height:auto!important;display:block}img{max-height:none!important;height:auto!important;width:100%!important;display:block!important;object-fit:contain!important}@media print{body{padding:12px}@page{margin:1.5cm}img{max-height:400px!important;width:auto!important;max-width:100%!important;object-fit:contain!important;display:block!important;margin:0 auto!important;page-break-inside:avoid;break-inside:avoid}}`;
     const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${esc(s.date)}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${fakePlan.totalMin} Min · 👥 ${fakePlan.kids} Kinder · 🧑‍🏫 ${fakePlan.coaches} Trainer${fakePlan.location?` · 📍 ${esc(fakePlan.location)}`:""}${fakePlan.breakMin>0?` · ⏸ ${fakePlan.breakMin} Min Pausen`:""}</div>${tlHtml}${rows}${teamsHtml2}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div><script>
-window.addEventListener("load",function(){
-  document.querySelectorAll("img").forEach(function(img){
-    function fix(){if(img.naturalWidth>0)img.style.height=(img.offsetWidth*img.naturalHeight/img.naturalWidth)+"px";}
-    if(img.complete)fix();else img.addEventListener("load",fix);
-  });
-});
+(function(){
+  var MAX_H=500; // px - fits safely on A4 at any DPR
+  function fixImg(img){
+    if(!img.naturalWidth||!img.naturalHeight)return;
+    var ratio=img.naturalHeight/img.naturalWidth;
+    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
+    var h=maxW*ratio;
+    var w=maxW;
+    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
+    img.style.width=w+"px";
+    img.style.height=h+"px";
+    img.style.maxWidth="100%";
+    img.style.display="block";
+    img.style.objectFit="contain";
+    img.style.background="#f8fafc";
+    img.style.margin="0 auto 8px";
+  }
+  function run(){document.querySelectorAll("img").forEach(function(img){
+    if(img.complete&&img.naturalWidth>0)fixImg(img);
+    else img.addEventListener("load",function(){fixImg(img);});
+  });}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
+  else run();
+  window.addEventListener("load",run);
+})();
 </script></body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
@@ -2069,12 +2145,31 @@ window.addEventListener("load",function(){
   const teamsHtml=(s.teams||[]).length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;page-break-inside:avoid"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">${(s.teams||[]).map(t=>`<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
   const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111}h1{font-size:22px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%;height:auto!important;display:block}img{max-height:none!important;height:auto!important;width:100%!important;display:block!important;object-fit:contain!important}@media print{body{padding:12px}@page{margin:1.5cm}img{max-height:400px!important;width:auto!important;max-width:100%!important;object-fit:contain!important;display:block!important;margin:0 auto!important;page-break-inside:avoid;break-inside:avoid}}`;
   const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Training ${s.date||""}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${s.duration} Min · 👥 ${s.participantCount||"–"} Kinder${s.location?` · 📍 ${esc(s.location)}`:""}</div>${teamsHtml}${ex.length?`<h2 style="font-size:16px;font-weight:800;margin:0 0 12px">📚 Übungen (${ex.length})</h2>${exHtml}`:`<p style="color:#9ca3af">Keine Übungen verknüpft.</p>`}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div><script>
-window.addEventListener("load",function(){
-  document.querySelectorAll("img").forEach(function(img){
-    function fix(){if(img.naturalWidth>0)img.style.height=(img.offsetWidth*img.naturalHeight/img.naturalWidth)+"px";}
-    if(img.complete)fix();else img.addEventListener("load",fix);
-  });
-});
+(function(){
+  var MAX_H=500; // px - fits safely on A4 at any DPR
+  function fixImg(img){
+    if(!img.naturalWidth||!img.naturalHeight)return;
+    var ratio=img.naturalHeight/img.naturalWidth;
+    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
+    var h=maxW*ratio;
+    var w=maxW;
+    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
+    img.style.width=w+"px";
+    img.style.height=h+"px";
+    img.style.maxWidth="100%";
+    img.style.display="block";
+    img.style.objectFit="contain";
+    img.style.background="#f8fafc";
+    img.style.margin="0 auto 8px";
+  }
+  function run(){document.querySelectorAll("img").forEach(function(img){
+    if(img.complete&&img.naturalWidth>0)fixImg(img);
+    else img.addEventListener("load",function(){fixImg(img);});
+  });}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
+  else run();
+  window.addEventListener("load",run);
+})();
 </script></body></html>`;
   const w=window.open("","_blank");
   if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
@@ -2110,12 +2205,31 @@ function ShareTeamsModal({teamset,onClose,toast}) {
       return`<div class="team"><div class="team-header" style="background:${cols[i%cols.length]}">${["🔴","🔵","🟢","🟡","🟠","🟣","⚪","🟤"][i%8]} ${t.name}</div>${(t.players||[]).map(p=>`<div class="player">${p.name}</div>`).join("")}</div>`;
     }).join("");
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Teams</title><style>${css}</style></head><body><h1>${teamset.name||"Teams"}</h1><div class="date">📅 ${new Date(teamset.date).toLocaleDateString("de-DE")} · ${teamset.teams.length} Teams · ${teamset.teams.reduce((s,t)=>s+(t.players?.length||0),0)} Kinder</div><div class="teams">${teamsHtml}</div><script>
-window.addEventListener("load",function(){
-  document.querySelectorAll("img").forEach(function(img){
-    function fix(){if(img.naturalWidth>0)img.style.height=(img.offsetWidth*img.naturalHeight/img.naturalWidth)+"px";}
-    if(img.complete)fix();else img.addEventListener("load",fix);
-  });
-});
+(function(){
+  var MAX_H=500; // px - fits safely on A4 at any DPR
+  function fixImg(img){
+    if(!img.naturalWidth||!img.naturalHeight)return;
+    var ratio=img.naturalHeight/img.naturalWidth;
+    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
+    var h=maxW*ratio;
+    var w=maxW;
+    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
+    img.style.width=w+"px";
+    img.style.height=h+"px";
+    img.style.maxWidth="100%";
+    img.style.display="block";
+    img.style.objectFit="contain";
+    img.style.background="#f8fafc";
+    img.style.margin="0 auto 8px";
+  }
+  function run(){document.querySelectorAll("img").forEach(function(img){
+    if(img.complete&&img.naturalWidth>0)fixImg(img);
+    else img.addEventListener("load",function(){fixImg(img);});
+  });}
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
+  else run();
+  window.addEventListener("load",run);
+})();
 </script></body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),400);}
