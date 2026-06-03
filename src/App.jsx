@@ -1718,11 +1718,11 @@ function ManualTrainingPlanner({exercises,players,onClose,onSaveSession,apiKey,t
       </div>
 
       <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap",paddingTop:12,borderTop:`1px solid ${C.border}`}}>
-        <Btn onClick={()=>setPlan(null)} variant="secondary"><RefreshCw size={14}/> Neu</Btn>
+        <Btn onClick={()=>setPlan(null)} variant="secondary">✏️ Bearbeiten</Btn>
         <Btn onClick={printPlan} variant="secondary">🖨️ PDF / Drucken</Btn>
         <Btn onClick={()=>{
           const exIds=[...new Set(plan.phases.flatMap(ph=>ph.stations?ph.stations.map(s=>s.exercise?.id).filter(Boolean):[ph.exercise?.id].filter(Boolean)))];
-          onSaveSession({id:replaceId||uid(),createdAt:now(),date:plan.date||todayISO(),duration:plan.totalMin,location:plan.location||"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:planTeams,notes:`Manuell geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
+          onSaveSession({id:replaceId||uid(),createdAt:now(),date:plan.date||todayISO(),duration:plan.totalMin,location:plan.location||"",weather:"",participantCount:String(plan.kids),coachIds:[],playerIds:[],exerciseIds:exIds,teams:planTeams,planData:{phases:plan.phases,kids:plan.kids,coaches:plan.coaches,totalMin:plan.totalMin,breakMin:plan.breakMin,date:plan.date,location:plan.location},notes:`Manuell geplant: ${plan.phases.map(ph=>ph.block.label).join(" → ")}`});
           toast("Training gespeichert ✓");
           onClose();
         }}><CalendarDays size={14}/> Speichern</Btn>
@@ -1907,54 +1907,68 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
 
 
 function printSession(s,exercises,toast) {
+  // If session has planData (from ManualTrainingPlanner), use full phase-based PDF
+  if(s.planData?.phases) {
+    const fakePlan={...s.planData};
+    const fakeTeams=s.teams||[];
+    // Re-hydrate exercises in phases from library
+    fakePlan.phases=fakePlan.phases.map(ph=>{
+      if(ph.stations){
+        const stations=ph.stations.map(st=>({...st,exercise:st.exercise?exercises.find(e=>e.id===st.exercise?.id)||st.exercise:null}));
+        return {...ph,stations};
+      }
+      return {...ph,exercise:ph.exercise?exercises.find(e=>e.id===ph.exercise?.id)||ph.exercise:null};
+    });
+    // Use same printPlan logic inline
+    const esc=t=>String(t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const bgMap={ankommen:"#f1f5f9",aufwaermen:"#fff3e0",koordination:"#f3e8ff",technik:"#e8f0fe",spielform:"#e8f5e9",abschluss:"#fce4ec"};
+    const colMap={ankommen:"#475569",aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
+    const exBlock=(ex)=>{
+      if(!ex) return`<p style="color:#9ca3af;font-style:italic;margin:4px 0">Freie Übung</p>`;
+      const img=ex.imageUrl?`<img src="${ex.imageUrl}" style="width:100%;max-height:220px;object-fit:contain;border-radius:6px;margin:8px 0;background:#f8fafc;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
+      return`${img}${ex.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin:6px 0;border-left:3px solid #94a3b8"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">📐 Aufbau</span><br><span style="font-size:13px;line-height:1.6">${esc(ex.setup)}</span></div>`:""}${ex.description?`<div style="margin:6px 0"><span style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase">🎯 Ablauf</span><br><p style="font-size:13px;line-height:1.7;margin:4px 0">${esc(ex.description)}</p></div>`:""}${ex.material?.length?`<div style="font-size:12px;color:#6b7280;margin:4px 0">📦 ${esc(ex.material.join(", "))}</div>`:""}${ex.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic;margin-top:6px">💡 ${esc(ex.notes)}</div>`:""}`;
+    };
+    let cur=0;const tl=[];
+    fakePlan.phases.forEach((ph,i)=>{tl.push({label:`${ph.block.emoji} ${esc(ph.block.label)}`,min:ph.minutes,col:colMap[ph.block.cat||ph.block.key]||"#374151"});cur+=ph.minutes;if(i<fakePlan.phases.length-1&&fakePlan.breakMin>0&&!ph.isFree){tl.push({label:"⏸",min:fakePlan.breakMin,col:"#94a3b8"});cur+=fakePlan.breakMin;}});
+    const tlHtml=`<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-bottom:20px;padding:10px 14px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0">${tl.map(t=>`<span style="padding:3px 10px;border-radius:20px;background:${t.col}18;border:1px solid ${t.col}33;font-size:12px;font-weight:700;color:${t.col}">${t.label} ${t.min}m</span>`).join('<span style="color:#cbd5e1;font-size:12px"> → </span>')}<span style="margin-left:auto;font-size:12px;color:#6b7280">= ${cur} / ${fakePlan.totalMin} Min</span></div>`;
+    const rows=fakePlan.phases.map(ph=>{
+      const bg=bgMap[ph.block.cat||ph.block.key]||"#f8fafc";const col=colMap[ph.block.cat||ph.block.key]||"#374151";
+      const kidsLabel=typeof ph.kids==="number"?`${ph.kids} Kinder`:ph.kids;
+      let body="";
+      if(ph.isFree){body=`<div style="padding:12px 14px"><p style="margin:0 0 6px;font-size:14px">⚽ <strong>Kinder spielen frei</strong></p><p style="margin:0;padding:8px 12px;background:#faf5ff;border-radius:6px;color:#6d28d9;font-size:13px">🧑‍🏫 Trainer: <strong>${ph.minutes} Min</strong> Aufbau der nächsten Station.</p></div>`;}
+      else if(ph.stations){
+        const rot=Math.floor(ph.minutes/ph.stations.length);const swaps=ph.stations.length-1;
+        body=`<div style="padding:8px 14px;background:#faf5ff;border-bottom:1px solid #e9d5ff"><strong style="font-size:13px;color:#7c3aed">🔄 ${ph.stations.length} Stationen parallel</strong><span style="font-size:12px;color:#6d28d9;margin-left:8px">· alle <strong>${rot} Min</strong> wechseln · ${swaps}× · ${ph.minutes} Min gesamt</span></div>`;
+        body+=ph.stations.map((st,j)=>`<div style="padding:12px 14px;border-top:1px solid #f1f5f9;page-break-inside:avoid"><div style="font-weight:800;font-size:14px;color:#1d4ed8;margin-bottom:8px">📍 ${esc(st.label)} · ${st.kids} Kinder${st.exercise?" — "+esc(st.exercise.title):""}</div>${exBlock(st.exercise)}</div>`).join("");
+        body+=`<div style="padding:8px 14px;background:#fef9c3;border-top:1px solid #fde047;font-size:12px;color:#92400e;font-weight:600">⏱ ${Array.from({length:ph.stations.length},(_,i)=>`${i*rot}–${(i+1)*rot} Min → Station ${i+1}`).join(" → ")}</div>`;
+      } else {body=`<div style="padding:12px 14px">${ph.exercise?`<div style="font-weight:800;font-size:15px;color:#111;margin-bottom:8px">${esc(ph.exercise.title)}</div>${exBlock(ph.exercise)}`:`<p style="color:#9ca3af;font-style:italic">Freie Übung</p>`}</div>`;}
+      return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid"><div style="background:${bg};padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span style="font-weight:900;font-size:16px;color:${col}">${ph.block.emoji} ${esc(ph.block.label)}</span><span style="font-size:13px;color:#475569;font-weight:700">⏱ ${ph.minutes} Min &nbsp; 👥 ${kidsLabel}</span></div>${body}</div>`;
+    }).join("");
+    const teamsHtml2=fakeTeams.length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">${fakeTeams.map(t=>`<div style="border:1.5px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
+    const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}h1{font-size:24px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%}@media print{body{padding:12px}@page{margin:1.5cm}}`;
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${esc(s.date)}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${fakePlan.totalMin} Min · 👥 ${fakePlan.kids} Kinder · 🧑‍🏫 ${fakePlan.coaches} Trainer${fakePlan.location?` · 📍 ${esc(fakePlan.location)}`:""}${fakePlan.breakMin>0?` · ⏸ ${fakePlan.breakMin} Min Pausen`:""}</div>${tlHtml}${rows}${teamsHtml2}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div></body></html>`;
+    const w=window.open("","_blank");
+    if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
+    else{saveFileSync(html,"Trainingsplan_"+s.date+".html","text/html");toast("Als HTML gespeichert");}
+    return;
+  }
+
+  // Fallback: simple exercise list (old sessions without planData)
   const esc=t=>String(t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const ex=(s.exerciseIds||[]).map(id=>exercises.find(e=>e.id===id)).filter(Boolean);
   const bgMap={aufwaermen:"#fff3e0",koordination:"#f3e8ff",technik:"#e8f0fe",spielform:"#e8f5e9",abschluss:"#fce4ec"};
   const colMap={aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
-
   const exHtml=ex.map(e=>{
-    const bg=bgMap[e.category]||"#f8fafc";
-    const col=colMap[e.category]||"#374151";
+    const bg=bgMap[e.category]||"#f8fafc";const col=colMap[e.category]||"#374151";
     const img=e.imageUrl?`<img src="${e.imageUrl}" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px;margin:8px 0;border:1px solid #e5e7eb" onerror="this.style.display='none'"/>`:"";
-    return `<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid">
-      <div style="background:${bg};padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="font-size:16px">${esc(CATS[e.category]?.emoji||"📋")}</span>
-        <span style="font-weight:800;font-size:15px;color:${col};flex:1">${esc(e.title)}</span>
-        ${e.duration?`<span style="font-size:12px;color:#64748b">⏱ ${e.duration} Min</span>`:""}
-        ${e.minPlayers?`<span style="font-size:12px;color:#64748b">👥 ${e.minPlayers}–${e.maxPlayers}</span>`:""}
-      </div>
-      <div style="padding:12px 16px">
-        ${img}
-        ${e.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin-bottom:8px;border-left:3px solid #94a3b8"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">📐 Aufbau</div><div style="font-size:13px;line-height:1.6">${esc(e.setup)}</div></div>`:""}
-        ${e.description?`<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">🎯 Ablauf</div><div style="font-size:13px;line-height:1.7">${esc(e.description)}</div></div>`:""}
-        ${e.material?.length?`<div style="font-size:12px;color:#6b7280;margin-bottom:4px">📦 Material: ${esc(e.material.join(", "))}</div>`:""}
-        ${e.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic">💡 ${esc(e.notes)}</div>`:""}
-      </div>
-    </div>`;
+    return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden;page-break-inside:avoid"><div style="background:${bg};padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:16px">${esc(CATS[e.category]?.emoji||"📋")}</span><span style="font-weight:800;font-size:15px;color:${col};flex:1">${esc(e.title)}</span>${e.duration?`<span style="font-size:12px;color:#64748b">⏱ ${e.duration} Min</span>`:""}</div><div style="padding:12px 16px">${img}${e.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin-bottom:8px;border-left:3px solid #94a3b8"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">📐 Aufbau</div><div style="font-size:13px;line-height:1.6">${esc(e.setup)}</div></div>`:""}${e.description?`<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">🎯 Ablauf</div><div style="font-size:13px;line-height:1.7">${esc(e.description)}</div></div>`:""}${e.material?.length?`<div style="font-size:12px;color:#6b7280;margin-bottom:4px">📦 ${esc(e.material.join(", "))}</div>`:""}${e.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic">💡 ${esc(e.notes)}</div>`:""}</div></div>`;
   }).join("");
-
-  const teamsHtml=(s.teams||[]).length?`
-    <div style="border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;margin-bottom:14px;page-break-inside:avoid">
-      <div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">
-        ${(s.teams||[]).map(t=>`<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}
-      </div>
-    </div>`:"";
-
+  const teamsHtml=(s.teams||[]).length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden;page-break-inside:avoid"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">${(s.teams||[]).map(t=>`<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
   const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111}h1{font-size:22px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%}@media print{body{padding:12px}@page{margin:1.5cm}}`;
-  const notes=s.notes?`<div style="margin-bottom:16px;padding:10px 14px;background:#fffbeb;border-radius:8px;border:1px solid #fde68a;font-size:13px">${esc(s.notes)}</div>`:"";
-  const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Training ${s.date||""}</title><style>${css}</style></head><body>
-    <h1>Trainingsplan</h1>
-    <div class="meta">📅 ${esc(s.date)} &nbsp;·&nbsp; ⏱ ${s.duration} Min &nbsp;·&nbsp; 👥 ${s.participantCount||"–"} Kinder${s.location?` &nbsp;·&nbsp; 📍 ${esc(s.location)}`:""}</div>
-    ${notes}
-    ${teamsHtml}
-    ${ex.length?`<h2 style="font-size:16px;font-weight:800;margin:0 0 12px">📚 Übungen (${ex.length})</h2>${exHtml}`:`<p style="color:#9ca3af">Keine Übungen verknüpft.</p>`}
-    <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
-  </body></html>`;
-
+  const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Training ${s.date||""}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${s.duration} Min · 👥 ${s.participantCount||"–"} Kinder${s.location?` · 📍 ${esc(s.location)}`:""}</div>${teamsHtml}${ex.length?`<h2 style="font-size:16px;font-weight:800;margin:0 0 12px">📚 Übungen (${ex.length})</h2>${exHtml}`:`<p style="color:#9ca3af">Keine Übungen verknüpft.</p>`}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div></body></html>`;
   const w=window.open("","_blank");
   if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
-  else{saveFileSync(html,"Training_"+s.date+".html","text/html");toast("Als HTML gespeichert – im Browser öffnen und drucken");}
+  else{saveFileSync(html,"Training_"+s.date+".html","text/html");toast("Als HTML gespeichert");}
 }
 
 
