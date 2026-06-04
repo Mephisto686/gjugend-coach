@@ -7,7 +7,7 @@ const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 db.version(2).stores({ kv: 'key', teamsets: '++id,date' });
 
-const APP_VERSION = "3.9.0";
+const APP_VERSION = "3.9.2";
 const BUILTIN_CATS = {
   aufwaermen:   { label:"Aufwärmen",    emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   koordination: { label:"Koordination", emoji:"🎯", color:"#7c3aed", bg:"#f5f3ff", builtin:true },
@@ -185,33 +185,7 @@ ${ex.material?.length?`<div class="sec"><h2>📦 Material</h2><div class="chips"
 ${ex.tags?.length?`<div class="sec"><h2>🏷️ Tags</h2><div class="chips">${ex.tags.map(t=>`<span class="chip tag">${t}</span>`).join('')}</div></div>`:''}
 ${ex.notes?`<div class="sec"><h2>💬 Notizen & Varianten</h2><div class="box" style="font-style:italic">${ex.notes}</div></div>`:''}
 <div class="footer">G-Jugend Coach v${APP_VERSION} · Erstellt: ${new Date().toLocaleDateString('de-DE')}</div>
-<script>
-(function(){
-  var MAX_H=500; // px - fits safely on A4 at any DPR
-  function fixImg(img){
-    if(!img.naturalWidth||!img.naturalHeight)return;
-    var ratio=img.naturalHeight/img.naturalWidth;
-    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
-    var h=maxW*ratio;
-    var w=maxW;
-    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
-    img.style.width=w+"px";
-    img.style.height=h+"px";
-    img.style.maxWidth="100%";
-    img.style.display="block";
-    img.style.objectFit="contain";
-    img.style.background="#f8fafc";
-    img.style.margin="0 auto 8px";
-  }
-  function run(){document.querySelectorAll("img").forEach(function(img){
-    if(img.complete&&img.naturalWidth>0)fixImg(img);
-    else img.addEventListener("load",function(){fixImg(img);});
-  });}
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
-  else run();
-  window.addEventListener("load",run);
-})();
-</script></body></html>`;
+${PDF_SCRIPT}</body></html>`;
 };
 
 // HTML: In neuem Tab öffnen + als Datei speichern
@@ -228,6 +202,11 @@ const exportExHtml = async (ex) => {
 const readText    = f=>new Promise((r,j)=>{const x=new FileReader();x.onload=e=>r(e.target.result);x.onerror=j;x.readAsText(f);});
 const readDataURL = f=>new Promise((r,j)=>{const x=new FileReader();x.onload=e=>r(e.target.result);x.onerror=j;x.readAsDataURL(f);});
 const parseJsonSafe = t=>{ try{return JSON.parse(t.replace(/```json\n?/g,"").replace(/```\n?/g,"").trim());}catch{return null;} };
+
+// ── PDF Helpers ──
+const PDF_CSS=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}h1{font-size:22px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-height:none!important;height:auto!important;width:100%!important;display:block!important}@media print{body{padding:12px}@page{margin:1.5cm}img{max-height:500px!important;width:auto!important;max-width:100%!important;object-fit:contain!important;display:block!important;margin:0 auto!important;page-break-inside:avoid;break-inside:avoid}}`;
+const PDF_SCRIPT=`<scr`+`ipt>(function(){var MAX_H=500;function fx(img){if(!img.naturalWidth)return;var r=img.naturalHeight/img.naturalWidth,mW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth,h=mW*r,w=mW;if(h>MAX_H){h=MAX_H;w=h/r;}img.style.cssText="width:"+w+"px;height:"+h+"px;display:block;object-fit:contain;background:#f8fafc;margin:0 auto 8px;border-radius:6px";}function run(){document.querySelectorAll("img").forEach(function(i){if(i.complete&&i.naturalWidth)fx(i);else i.addEventListener("load",function(){fx(i);});});}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);else run();window.addEventListener("load",run);})();<`+`/script>`;
+function openPdf(html,filename,toast){const w=window.open("","_blank");if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}else{saveFileSync(html,filename,"text/html");toast?.("Als HTML gespeichert");}}
 const parseCsvPlayers = text=>{ const ls=text.trim().split("\n");if(ls.length<2)return[];const hs=ls[0].split(",").map(h=>h.replace(/"/g,"").trim().toLowerCase());return ls.slice(1).map(l=>{const vs=l.split(",").map(v=>v.replace(/"/g,"").trim()),o={};hs.forEach((h,i)=>o[h]=vs[i]??"");return{id:uid(),createdAt:now(),name:o.name||"?",birthYear:Number(o.birthyear||o.jahrgang||2019),strength:Math.min(4,Math.max(1,Number(o.strength||o.staerke||1))),active:o.active!=="false",jersey:o.jersey||o.trikot||"",notes:o.notes||o.notizen||""};}).filter(p=>p.name&&p.name!=="?"); };
 
 // ── SHUFFLE FIX ───────────────────────────────────────────────────
@@ -823,39 +802,13 @@ function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
           </div>
         </div>`;
     }).join("");
-    const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111}.footer{margin-top:24px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-height:none!important;height:auto!important;width:100%!important;display:block!important;object-fit:contain!important}@media print{body{padding:12px}@page{margin:1.5cm}img{max-height:400px!important;width:auto!important;max-width:100%!important;object-fit:contain!important;display:block!important;margin:0 auto!important;page-break-inside:avoid;break-inside:avoid}}`;
+    const css=`${PDF_CSS}`;
     const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Übungen (${exList.length})</title><style>${css}</style></head><body>
       <h1 style="font-size:22px;margin:0 0 4px">Übungssammlung</h1>
       <div style="font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb">${exList.length} Übung${exList.length!==1?"en":""} · SC Sternschanze G-Jugend</div>
       ${exHtml}
       <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
-    <script>
-(function(){
-  var MAX_H=500; // px - fits safely on A4 at any DPR
-  function fixImg(img){
-    if(!img.naturalWidth||!img.naturalHeight)return;
-    var ratio=img.naturalHeight/img.naturalWidth;
-    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
-    var h=maxW*ratio;
-    var w=maxW;
-    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
-    img.style.width=w+"px";
-    img.style.height=h+"px";
-    img.style.maxWidth="100%";
-    img.style.display="block";
-    img.style.objectFit="contain";
-    img.style.background="#f8fafc";
-    img.style.margin="0 auto 8px";
-  }
-  function run(){document.querySelectorAll("img").forEach(function(img){
-    if(img.complete&&img.naturalWidth>0)fixImg(img);
-    else img.addEventListener("load",function(){fixImg(img);});
-  });}
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
-  else run();
-  window.addEventListener("load",run);
-})();
-</script></body></html>`;
+${PDF_SCRIPT}</body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);}
     else{saveFileSync(html,`GJugend_Uebungen_${todayISO()}.html`,"text/html");toast("Als HTML gespeichert – im Browser öffnen und drucken");}
@@ -1698,39 +1651,13 @@ function ManualTrainingPlanner({exercises,players,coachesList=[],onClose,onSaveS
 
     const teamsHtml=planTeams.length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;page-break-inside:avoid"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;padding:12px">${planTeams.map(t=>`<div style="border:1.5px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${t.players.map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
 
-    const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}h1{font-size:24px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%;height:auto!important;display:block}img{max-height:none!important;height:auto!important;width:100%!important;display:block!important;object-fit:contain!important}@media print{body{padding:12px}@page{margin:1.5cm}img{max-height:400px!important;width:auto!important;max-width:100%!important;object-fit:contain!important;display:block!important;margin:0 auto!important;page-break-inside:avoid;break-inside:avoid}}`;
+    const css=`${PDF_CSS}`;
     const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${esc(plan.date||todayISO())}</title><style>${css}</style></head><body>
       <h1>Trainingsplan</h1>
       <div class="meta">📅 ${esc(plan.date||todayISO())} · ⏱ ${plan.totalMin} Min · 👥 ${plan.kids} Kinder · 🧑‍🏫 ${plan.coaches} Trainer${plan.location?` · 📍 ${esc(plan.location)}`:""}${plan.breakMin>0?` · ⏸ ${plan.breakMin} Min Pausen`:""}</div>
       ${timelineHtml}${matHtml}${rows}${teamsHtml}
       <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
-    <script>
-(function(){
-  var MAX_H=500; // px - fits safely on A4 at any DPR
-  function fixImg(img){
-    if(!img.naturalWidth||!img.naturalHeight)return;
-    var ratio=img.naturalHeight/img.naturalWidth;
-    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
-    var h=maxW*ratio;
-    var w=maxW;
-    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
-    img.style.width=w+"px";
-    img.style.height=h+"px";
-    img.style.maxWidth="100%";
-    img.style.display="block";
-    img.style.objectFit="contain";
-    img.style.background="#f8fafc";
-    img.style.margin="0 auto 8px";
-  }
-  function run(){document.querySelectorAll("img").forEach(function(img){
-    if(img.complete&&img.naturalWidth>0)fixImg(img);
-    else img.addEventListener("load",function(){fixImg(img);});
-  });}
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
-  else run();
-  window.addEventListener("load",run);
-})();
-</script></body></html>`;
+${PDF_SCRIPT}</body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
     else{saveFileSync(html,"Trainingsplan_"+todayISO()+".html","text/html");toast("Als HTML gespeichert – im Browser öffnen und drucken");}
@@ -2002,8 +1929,81 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
       <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Anwesend ({pr.length})</div>
       <div style={{display:"flex",flexWrap:"wrap",gap:4}}>{pr.map(p=><span key={p.id} style={{fontSize:12,padding:"3px 10px",borderRadius:20,background:STR[p.strength]?.light||"#f1f5f9",color:STR[p.strength]?.color||C.muted,fontWeight:600}}>{STR[p.strength]?.emoji} {p.name}</span>)}</div>
     </div>}
-    {/* Exercises */}
-    {ex.length>0&&<div style={{marginBottom:14}}>
+    {/* Phase Timeline (when plan data available) */}
+    {s.planData?.phases?(<div style={{marginBottom:14}}>
+      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>Trainingsplan</div>
+      {(()=>{
+        const phases=s.planData.phases;
+        const breakMin=s.planData.breakMin||0;
+        const totalMin=s.planData.totalMin||s.duration;
+        let cursor=0;
+        const items=[];
+        phases.forEach((ph,i)=>{
+          const start=cursor;
+          cursor+=ph.minutes;
+          items.push({type:"phase",ph,start,end:cursor,i});
+          if(i<phases.length-1&&breakMin>0&&!ph.isFree){
+            items.push({type:"break",start:cursor,end:cursor+breakMin});
+            cursor+=breakMin;
+          }
+        });
+        return(<div style={{position:"relative",display:"flex",gap:0}}>
+          {/* Timeline sidebar */}
+          <div style={{width:44,flexShrink:0,position:"relative"}}>
+            {items.map((item,idx)=>{
+              const pct=item.minutes?item.minutes/totalMin*100:((item.end-item.start)/totalMin*100);
+              const h=Math.max(32,(item.end-item.start)/totalMin*300);
+              const isBreak=item.type==="break";
+              return(<div key={idx} style={{height:h,display:"flex",flexDirection:"column",alignItems:"center",position:"relative"}}>
+                <div style={{width:2,flex:1,background:isBreak?"#e2e8f0":C.primary,opacity:isBreak?.5:1}}/>
+                {!isBreak&&<div style={{width:10,height:10,borderRadius:"50%",background:C.primary,flexShrink:0,zIndex:1}}/>}
+                <div style={{width:2,flex:isBreak?1:0,background:C.primary,opacity:.3}}/>
+              </div>);
+            })}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:C.muted,flexShrink:0}}/>
+            </div>
+          </div>
+          {/* Phase cards */}
+          <div style={{flex:1,display:"flex",flexDirection:"column",gap:0}}>
+            {items.map((item,idx)=>{
+              const h=Math.max(32,(item.end-item.start)/totalMin*300);
+              if(item.type==="break") return(
+                <div key={idx} style={{height:h,display:"flex",alignItems:"center",paddingLeft:8}}>
+                  <span style={{fontSize:11,color:C.muted}}>⏸ {item.end-item.start} Min Pause</span>
+                </div>
+              );
+              const ph=item.ph;
+              const colMap={ankommen:"#64748b",aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
+              const col=colMap[ph.block?.cat||ph.block?.key]||C.primary;
+              const exNames=ph.stations
+                ?ph.stations.map(st=>st.exercise?.title).filter(Boolean)
+                :[ph.exercise?.title].filter(Boolean);
+              return(
+                <div key={idx} style={{height:h,paddingLeft:8,paddingBottom:4,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                  <div style={{background:"white",borderRadius:8,border:`1.5px solid ${col}44`,padding:"6px 10px",borderLeft:`3px solid ${col}`}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:13}}>{ph.block?.emoji}</span>
+                      <span style={{fontWeight:800,fontSize:13,color:col}}>{ph.block?.label}</span>
+                      <span style={{fontSize:11,color:C.muted,marginLeft:"auto",whiteSpace:"nowrap"}}>⏱ {ph.minutes} Min</span>
+                      <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{item.start}–{item.end}</span>
+                    </div>
+                    {ph.stations&&<div style={{fontSize:11,color:"#7c3aed",marginTop:2}}>🔄 {ph.stations.length} Gruppen · {Math.floor(ph.minutes/ph.stations.length)} Min/Gruppe</div>}
+                    {exNames.length>0&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{exNames.join(" · ")}</div>}
+                  </div>
+                </div>
+              );
+            })}
+            {/* End marker */}
+            <div style={{paddingLeft:8,paddingTop:4}}>
+              <span style={{fontSize:11,color:C.muted,fontWeight:700}}>{cursor} Min — Ende</span>
+            </div>
+          </div>
+        </div>);
+      })()}
+    </div>):
+    /* Exercises (fallback for sessions without planData) */
+    ex.length>0&&<div style={{marginBottom:14}}>
       <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:6}}>Übungen ({ex.length})</div>
       {selEx?(<div style={{background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",marginBottom:8}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:`1px solid ${C.border}`,background:"white"}}>
@@ -2043,7 +2043,7 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
         {onPrint&&<Btn onClick={onPrint} variant="secondary" style={{flex:1,justifyContent:"center"}}>🖨️ PDF erstellen</Btn>}
       </div>}
       <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
-        <Btn sm variant="danger" onClick={()=>{if(confirm("Training löschen?"))onDelete();}}><Trash2 size={13}/> Löschen</Btn>
+        <Btn sm variant="danger" onClick={()=>onDelete()}><Trash2 size={13}/> Löschen</Btn>
         <Btn sm variant="secondary" onClick={onEdit}><Edit2 size={13}/> Felder</Btn>
         <Btn sm onClick={onClose}>Schließen</Btn>
       </div>
@@ -2098,34 +2098,8 @@ function printSession(s,exercises,toast) {
       return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px"><div style="background:${bg};padding:10px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px"><span style="font-weight:900;font-size:16px;color:${col}">${ph.block.emoji} ${esc(ph.block.label)}</span><span style="font-size:13px;color:#475569;font-weight:700">⏱ ${ph.minutes} Min &nbsp; 👥 ${kidsLabel}</span></div>${body}</div>`;
     }).join("");
     const teamsHtml2=fakeTeams.length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;overflow:hidden"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">${fakeTeams.map(t=>`<div style="border:1.5px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
-    const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111;font-size:14px}h1{font-size:24px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%;height:auto!important;display:block}img{max-height:none!important;height:auto!important;width:100%!important;display:block!important;object-fit:contain!important}@media print{body{padding:12px}@page{margin:1.5cm}img{max-height:400px!important;width:auto!important;max-width:100%!important;object-fit:contain!important;display:block!important;margin:0 auto!important;page-break-inside:avoid;break-inside:avoid}}`;
-    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${esc(s.date)}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${fakePlan.totalMin} Min · 👥 ${fakePlan.kids} Kinder · 🧑‍🏫 ${fakePlan.coaches} Trainer${fakePlan.location?` · 📍 ${esc(fakePlan.location)}`:""}${fakePlan.breakMin>0?` · ⏸ ${fakePlan.breakMin} Min Pausen`:""}</div>${tlHtml}${rows}${teamsHtml2}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div><script>
-(function(){
-  var MAX_H=500; // px - fits safely on A4 at any DPR
-  function fixImg(img){
-    if(!img.naturalWidth||!img.naturalHeight)return;
-    var ratio=img.naturalHeight/img.naturalWidth;
-    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
-    var h=maxW*ratio;
-    var w=maxW;
-    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
-    img.style.width=w+"px";
-    img.style.height=h+"px";
-    img.style.maxWidth="100%";
-    img.style.display="block";
-    img.style.objectFit="contain";
-    img.style.background="#f8fafc";
-    img.style.margin="0 auto 8px";
-  }
-  function run(){document.querySelectorAll("img").forEach(function(img){
-    if(img.complete&&img.naturalWidth>0)fixImg(img);
-    else img.addEventListener("load",function(){fixImg(img);});
-  });}
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
-  else run();
-  window.addEventListener("load",run);
-})();
-</script></body></html>`;
+    const css=`${PDF_CSS}`;
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Trainingsplan ${esc(s.date)}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${fakePlan.totalMin} Min · 👥 ${fakePlan.kids} Kinder · 🧑‍🏫 ${fakePlan.coaches} Trainer${fakePlan.location?` · 📍 ${esc(fakePlan.location)}`:""}${fakePlan.breakMin>0?` · ⏸ ${fakePlan.breakMin} Min Pausen`:""}</div>${tlHtml}${rows}${teamsHtml2}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>${PDF_SCRIPT}</body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
     else{saveFileSync(html,"Trainingsplan_"+s.date+".html","text/html");toast("Als HTML gespeichert");}
@@ -2143,34 +2117,8 @@ function printSession(s,exercises,toast) {
     return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:14px"><div style="background:${bg};padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:16px">${esc(CATS[e.category]?.emoji||"📋")}</span><span style="font-weight:800;font-size:15px;color:${col};flex:1">${esc(e.title)}</span>${e.duration?`<span style="font-size:12px;color:#64748b">⏱ ${e.duration} Min</span>`:""}</div><div style="padding:12px 16px">${img}${e.setup?`<div style="background:#f8fafc;border-radius:6px;padding:8px 12px;margin-bottom:8px;border-left:3px solid #94a3b8"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">📐 Aufbau</div><div style="font-size:13px;line-height:1.6">${esc(e.setup)}</div></div>`:""}${e.description?`<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px">🎯 Ablauf</div><div style="font-size:13px;line-height:1.7">${esc(e.description)}</div></div>`:""}${e.material?.length?`<div style="font-size:12px;color:#6b7280;margin-bottom:4px">📦 ${esc(e.material.join(", "))}</div>`:""}${e.notes?`<div style="padding:6px 10px;background:#faf5ff;border-radius:6px;font-size:12px;color:#6d28d9;font-style:italic">💡 ${esc(e.notes)}</div>`:""}</div></div>`;
   }).join("");
   const teamsHtml=(s.teams||[]).length?`<div style="margin-top:20px;border:1.5px solid #e2e8f0;border-radius:10px;page-break-inside:avoid"><div style="background:#f0fdf4;padding:10px 16px;font-weight:800;font-size:14px;color:#166534">👥 Teams</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;padding:12px">${(s.teams||[]).map(t=>`<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px"><div style="font-weight:800;font-size:13px;color:#1d4ed8;margin-bottom:6px">${esc(t.name)}</div>${(t.players||[]).map(p=>`<div style="font-size:12px;padding:2px 0;border-bottom:1px solid #f1f5f9">${esc(p.name)}</div>`).join("")}</div>`).join("")}</div></div>`:"";
-  const css=`*{box-sizing:border-box}body{font-family:-apple-system,system-ui,sans-serif;padding:24px;max-width:820px;margin:0 auto;color:#111}h1{font-size:22px;margin:0 0 4px}.meta{font-size:13px;color:#6b7280;margin-bottom:20px;padding-bottom:12px;border-bottom:2px solid #e5e7eb}.footer{margin-top:20px;font-size:11px;color:#9ca3af;text-align:center;padding-top:12px;border-top:1px solid #e5e7eb}img{max-width:100%;height:auto!important;display:block}img{max-height:none!important;height:auto!important;width:100%!important;display:block!important;object-fit:contain!important}@media print{body{padding:12px}@page{margin:1.5cm}img{max-height:400px!important;width:auto!important;max-width:100%!important;object-fit:contain!important;display:block!important;margin:0 auto!important;page-break-inside:avoid;break-inside:avoid}}`;
-  const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Training ${s.date||""}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${s.duration} Min · 👥 ${s.participantCount||"–"} Kinder${s.location?` · 📍 ${esc(s.location)}`:""}</div>${teamsHtml}${ex.length?`<h2 style="font-size:16px;font-weight:800;margin:0 0 12px">📚 Übungen (${ex.length})</h2>${exHtml}`:`<p style="color:#9ca3af">Keine Übungen verknüpft.</p>`}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div><script>
-(function(){
-  var MAX_H=500; // px - fits safely on A4 at any DPR
-  function fixImg(img){
-    if(!img.naturalWidth||!img.naturalHeight)return;
-    var ratio=img.naturalHeight/img.naturalWidth;
-    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
-    var h=maxW*ratio;
-    var w=maxW;
-    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
-    img.style.width=w+"px";
-    img.style.height=h+"px";
-    img.style.maxWidth="100%";
-    img.style.display="block";
-    img.style.objectFit="contain";
-    img.style.background="#f8fafc";
-    img.style.margin="0 auto 8px";
-  }
-  function run(){document.querySelectorAll("img").forEach(function(img){
-    if(img.complete&&img.naturalWidth>0)fixImg(img);
-    else img.addEventListener("load",function(){fixImg(img);});
-  });}
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
-  else run();
-  window.addEventListener("load",run);
-})();
-</script></body></html>`;
+  const css=`${PDF_CSS}`;
+  const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Training ${s.date||""}</title><style>${css}</style></head><body><h1>Trainingsplan</h1><div class="meta">📅 ${esc(s.date)} · ⏱ ${s.duration} Min · 👥 ${s.participantCount||"–"} Kinder${s.location?` · 📍 ${esc(s.location)}`:""}</div>${teamsHtml}${ex.length?`<h2 style="font-size:16px;font-weight:800;margin:0 0 12px">📚 Übungen (${ex.length})</h2>${exHtml}`:`<p style="color:#9ca3af">Keine Übungen verknüpft.</p>`}<div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>${PDF_SCRIPT}</body></html>`;
   const w=window.open("","_blank");
   if(w){w.document.write(html);w.document.close();w.onload=()=>setTimeout(()=>w.print(),300);setTimeout(()=>w.print(),800);}
   else{saveFileSync(html,"Training_"+s.date+".html","text/html");toast("Als HTML gespeichert");}
@@ -2204,33 +2152,7 @@ function ShareTeamsModal({teamset,onClose,toast}) {
       const cols=["#fee2e2","#dbeafe","#dcfce7","#fef9c3","#ffedd5","#f3e8ff","#f1f5f9","#fce7f3"];
       return`<div class="team"><div class="team-header" style="background:${cols[i%cols.length]}">${["🔴","🔵","🟢","🟡","🟠","🟣","⚪","🟤"][i%8]} ${t.name}</div>${(t.players||[]).map(p=>`<div class="player">${p.name}</div>`).join("")}</div>`;
     }).join("");
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Teams</title><style>${css}</style></head><body><h1>${teamset.name||"Teams"}</h1><div class="date">📅 ${new Date(teamset.date).toLocaleDateString("de-DE")} · ${teamset.teams.length} Teams · ${teamset.teams.reduce((s,t)=>s+(t.players?.length||0),0)} Kinder</div><div class="teams">${teamsHtml}</div><script>
-(function(){
-  var MAX_H=500; // px - fits safely on A4 at any DPR
-  function fixImg(img){
-    if(!img.naturalWidth||!img.naturalHeight)return;
-    var ratio=img.naturalHeight/img.naturalWidth;
-    var maxW=img.parentElement?img.parentElement.offsetWidth:img.offsetWidth;
-    var h=maxW*ratio;
-    var w=maxW;
-    if(h>MAX_H){h=MAX_H;w=MAX_H/ratio;}
-    img.style.width=w+"px";
-    img.style.height=h+"px";
-    img.style.maxWidth="100%";
-    img.style.display="block";
-    img.style.objectFit="contain";
-    img.style.background="#f8fafc";
-    img.style.margin="0 auto 8px";
-  }
-  function run(){document.querySelectorAll("img").forEach(function(img){
-    if(img.complete&&img.naturalWidth>0)fixImg(img);
-    else img.addEventListener("load",function(){fixImg(img);});
-  });}
-  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",run);
-  else run();
-  window.addEventListener("load",run);
-})();
-</script></body></html>`;
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Teams</title><style>${css}</style></head><body><h1>${teamset.name||"Teams"}</h1><div class="date">📅 ${new Date(teamset.date).toLocaleDateString("de-DE")} · ${teamset.teams.length} Teams · ${teamset.teams.reduce((s,t)=>s+(t.players?.length||0),0)} Kinder</div><div class="teams">${teamsHtml}</div>${PDF_SCRIPT}</body></html>`;
     const w=window.open("","_blank");
     if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),400);}
     else{saveFileSync(html,"teams.html","text/html");toast("Als HTML gespeichert");}
@@ -2288,7 +2210,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
               <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
                 <button title="Teams bilden" onClick={()=>setModal({type:"tb",data:{session:s,players:pr.length?pr:players.filter(p=>p.active)}})} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}><Shuffle size={13}/></button>
                 <button title="Bearbeiten" onClick={()=>setModal({type:"session",data:s})} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}><Edit2 size={13}/></button>
-                <button title="Löschen" onClick={()=>{if(confirm("Training löschen?"))onDeleteSession(s.id);}} style={{padding:"5px 8px",borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={13}/></button>
+                <button title="Löschen" onClick={()=>onDeleteSession(s.id)} style={{padding:"5px 8px",borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={13}/></button>
               </div>
             </div>
           </div>);
@@ -2312,7 +2234,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
                 <div style={{fontSize:12,color:C.muted}}>{new Date(ts.date).toLocaleDateString("de-DE")} · {ts.teams.length} Teams · {ts.teams.reduce((s,t)=>s+(t.players?.length||0),0)} Kinder</div>
               </div>
               <button onClick={()=>setModal({type:"shareTeams",teamset:ts})} style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontSize:12,color:C.muted,fontFamily:"inherit"}}>📤 Teilen</button>
-              <button onClick={()=>{if(confirm("Löschen?"))onDeleteTeamset(ts.id);}} style={{padding:5,borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={14}/></button>
+              <button onClick={()=>onDeleteTeamset(ts.id)} style={{padding:5,borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={14}/></button>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:0}}>
               {ts.teams.map((t,i)=>(
@@ -2667,7 +2589,7 @@ function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[]
         {[...tournaments].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(t=>{
           const pl=t.matches.filter(m=>m.played).length,done=pl===t.matches.length,leader=done?calcStandings(t.teams,t.matches)[0]:null;
           return(<div key={t.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${done?"#22c55e":C.border}`,padding:"16px 18px",cursor:"pointer"}} onClick={()=>setOpen(t.id)}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}><div style={{fontWeight:800,fontSize:16,color:C.text}}>{t.name}</div><button onClick={e=>{e.stopPropagation();if(confirm(`"${t.name}" löschen?`))onDeleteTournament(t.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button></div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}><div style={{fontWeight:800,fontSize:16,color:C.text}}>{t.name}</div><button onClick={e=>{e.stopPropagation();onDeleteTournament(t.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button></div>
             <div style={{fontSize:13,color:C.muted,marginBottom:10}}>{fmtDate(t.date)} · {t.teams.length} Teams · {t.matchDuration} Min/Spiel</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>{t.teams.map(tm=><span key={tm.id} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.text}}><span style={{width:8,height:8,borderRadius:"50%",background:tm.color,display:"inline-block"}}/>{tm.name}</span>)}</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}><div style={{fontSize:12,color:C.muted}}>{pl}/{t.matches.length} Spiele {done?"✅":""}</div>{leader&&<div style={{fontSize:12,fontWeight:700,color:C.primary}}>🥇 {leader.name}</div>}</div>
@@ -2756,7 +2678,7 @@ function KassePage({kassenbuch,onSave,onDelete,toast}) {
           <div style={{fontWeight:900,fontSize:16,color:k.type==="ein"?"#16a34a":"#dc2626",flexShrink:0}}>{k.type==="ein"?"+":"-"}{fmt(k.amount)} €</div>
           <div style={{display:"flex",gap:4,flexShrink:0}}>
             <button onClick={()=>setModal({type:"form",data:k})} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4}}><Edit2 size={14}/></button>
-            <button onClick={()=>{if(confirm(`"${k.description}" löschen?`)){onDelete(k.id);toast("Eintrag gelöscht");}}} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button>
+            <button onClick={()=>onDelete(k.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button>
           </div>
         </div>)}
       </div>}
@@ -2833,7 +2755,16 @@ function AddCatForm({onAdd}) {
 }
 function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
-  const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));onImport(d,mode);toast("Import erfolgreich");}}catch(er){toast("Fehler: "+er.message,"err");}e.target.value=""; };
+  const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));
+    const t=d.type||"unknown";
+    if(!["full","exercises","team","sessions","tournaments","kassenbuch"].includes(t))throw new Error(`Unbekannter Typ: "${t}"`);
+    if(t==="exercises"&&!Array.isArray(d.exercises))throw new Error("Feld 'exercises' fehlt");
+    if(t==="team"&&!Array.isArray(d.players))throw new Error("Feld 'players' fehlt");
+    if(t==="sessions"&&!Array.isArray(d.sessions))throw new Error("Feld 'sessions' fehlt");
+    if(t==="full"&&(!Array.isArray(d.exercises)||!Array.isArray(d.players)))throw new Error("Backup unvollständig");
+    const svgs=(d.exercises||[]).filter(ex=>ex.imageUrl?.startsWith("data:image/svg")).length;
+    if(svgs>0)toast(`⚠️ ${svgs} Übung(en) mit SVG-Bild importiert`,"warn");
+    onImport(d,mode);toast(`Import OK (${t})`);}}catch(er){toast("Fehler: "+er.message,"err");}e.target.value=""; };
   const EC=({icon,title,desc,sub,fn})=><div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><div style={{fontWeight:700,fontSize:14,color:C.text}}>{icon} {title}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{desc}</div>{sub&&<div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{sub}</div>}</div><Btn sm onClick={fn}><Download size={13}/> Export</Btn></div>;
   const Sec=({title,ch})=><div style={{marginBottom:28}}><h2 style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:14,paddingBottom:8,borderBottom:`2px solid ${C.accentL}`}}>{title}</h2>{ch}</div>;
   return(<div>
@@ -2844,7 +2775,7 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       {apiKey&&<div style={{marginTop:8,fontSize:12,color:"#16a34a",fontWeight:600}}>✅ API-Key aktiv – KI-Funktionen verfügbar</div>}
     </div>}/>
     <Sec title="📤 Exportieren" ch={<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast)}/>
+      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={async()=>{await dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast);setLastExportAt(new Date().toISOString());}}/>
       <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`GJugend_Uebungen_${exercises.length}-Eintraege_${todayISO()}.json`,toast)}/>
       <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`GJugend_Team_${players.length}-Spieler_${todayISO()}.json`,toast)}/>
       <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={async()=>dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`GJugend_Spieler_${todayISO()}.csv`,toast)}/>
@@ -2970,6 +2901,15 @@ export default function App() {
   const [tournaments,setTournaments,tr]=useStorage("tournaments",[]);
   const [kassenbuch, setKassenbuch, kr]=useStorage("kassenbuch", []);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
+  const [lastExportAt,setLastExportAt]=useStorage("lastExportAt","");
+  const [undoBuf,setUndoBuf]=useState(null);
+  function showUndo(label,item,restoreFn){
+    if(undoBuf?.t)clearTimeout(undoBuf.t);
+    const t=setTimeout(()=>setUndoBuf(null),5000);
+    setUndoBuf({label:`${label} gelöscht`,t,
+      restore:()=>{clearTimeout(t);restoreFn();setUndoBuf(null);toast(`${label} wiederhergestellt`,"ok");}
+    });
+  }
   const [customCats, setCustomCats    ]=useStorage("customCats", []);
   const [teamsets,   setTeamsets        ]=useStorage("teamsets",   []);
   const saveTSets=x=>setTeamsets(upsert(x));
@@ -3016,12 +2956,17 @@ export default function App() {
     <Toasts/>
     <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length}}/>
     <main className="gm" style={{display:"block"}}>
-      {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{setExercises(prev=>prev.filter(e=>e.id!==id));toast("Übung gelöscht");}} apiKey={apiKey} toast={toast}/>}
-      {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={savePl} onDeletePlayer={id=>{setPlayers(prev=>prev.filter(p=>p.id!==id));toast("Spieler gelöscht");}} onSaveCoach={saveCo} onDeleteCoach={id=>{setCoaches(prev=>prev.filter(c=>c.id!==id));toast("Trainer gelöscht");}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}}/>}
-      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{setSessions(prev=>prev.filter(s=>s.id!==id));toast("Training gelöscht");}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>setTeamsets(prev=>prev.filter(t=>t.id!==id))}/>}
-      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{setTournaments(prev=>prev.filter(t=>t.id!==id));toast("Turnier gelöscht");}} coaches={coaches}/>}
-      {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{setKassenbuch(prev=>prev.filter(k=>k.id!==id));}} toast={toast}/>}
+      {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{const i=exercises.find(e=>e.id===id);setExercises(prev=>prev.filter(e=>e.id!==id));showUndo("Übung",i,()=>setExercises(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast}/>}
+      {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={savePl} onDeletePlayer={id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}} onSaveCoach={saveCo} onDeleteCoach={id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}}/>}
+      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>setTeamsets(prev=>prev.filter(t=>t.id!==id))}/>}
+      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
+      {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}} toast={toast}/>}
       {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats}/>}
     </main>
+    {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
+      <span style={{fontSize:13,fontWeight:600,flex:1}}>{undoBuf.label}</span>
+      <button onClick={undoBuf.restore} style={{background:"#3b82f6",color:"white",border:"none",borderRadius:8,padding:"6px 14px",fontSize:13,fontWeight:800,cursor:"pointer",whiteSpace:"nowrap"}}>↩ Rückgängig</button>
+      <button onClick={()=>{clearTimeout(undoBuf.t);setUndoBuf(null);}} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,lineHeight:1,padding:"0 2px"}}>✕</button>
+    </div>}
   </div>);
 }
