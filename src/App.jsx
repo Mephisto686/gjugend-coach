@@ -19,19 +19,23 @@ const FB_CONFIG = {
   messagingSenderId: "968145102711",
   appId: "1:968145102711:web:3d2bb4fc6c070655696372"
 };
-const fbApp  = initializeApp(FB_CONFIG);
-const fbAuth = getAuth(fbApp);
-const fbDb   = getFirestore(fbApp);
-const SHARED_COLLECTIONS = ["exercises","players","coaches","sessions","tournaments","kassenbuch"];
+let fbApp, fbAuth, fbDb;
+try {
+  fbApp  = initializeApp(FB_CONFIG);
+  fbAuth = getAuth(fbApp);
+  fbDb   = getFirestore(fbApp);
+} catch(e) { console.error("Firebase init failed:", e); }
 
 // Read a shared collection document (stored as one doc per collection for simplicity)
 async function fbRead(col) {
+  if(!fbDb) return null;
   try {
     const snap = await getDoc(doc(fbDb,"shared",col));
     return snap.exists() ? snap.data().items : null;
   } catch(e) { console.warn("fbRead",col,e); return null; }
 }
 async function fbWrite(col, items) {
+  if(!fbDb) return;
   try {
     await setDoc(doc(fbDb,"shared",col),{items, updatedAt: new Date().toISOString()});
   } catch(e) { console.warn("fbWrite",col,e); }
@@ -2798,7 +2802,7 @@ function AddCatForm({onAdd}) {
     <Btn sm onClick={add}><Plus size={13}/> Hinzufügen</Btn>
   </div>);
 }
-function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout}) {
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));
     const t=d.type||"unknown";
@@ -2830,7 +2834,7 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
       {apiKey&&<div style={{marginTop:8,fontSize:12,color:"#16a34a",fontWeight:600}}>✅ API-Key aktiv – KI-Funktionen verfügbar</div>}
     </div>}/>
     <Sec title="📤 Exportieren" ch={<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={doFullBackup}/>
+      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={onFullBackup}/>
       <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`GJugend_Uebungen_${exercises.length}-Eintraege_${todayISO()}.json`,toast)}/>
       <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`GJugend_Team_${players.length}-Spieler_${todayISO()}.json`,toast)}/>
       <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={async()=>dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`GJugend_Spieler_${todayISO()}.csv`,toast)}/>
@@ -2950,6 +2954,7 @@ function Nav({page,setPage,counts}) {
 function useFirebaseAuth() {
   const [user, setUser] = useState(undefined); // undefined=loading, null=signed out
   useEffect(() => {
+    if(!fbAuth) { setUser(null); return; }
     const unsub = onAuthStateChanged(fbAuth, u => setUser(u ?? null));
     return unsub;
   }, []);
@@ -2977,6 +2982,7 @@ function useCloudStorage(key, def, user) {
   // Subscribe to Firestore when logged in
   useEffect(() => {
     if (!user) return;
+    if(!fbDb) return;
     const unsub = onSnapshot(doc(fbDb, "shared", key), snap => {
       if (snap.exists()) {
         const items = snap.data().items;
@@ -3104,7 +3110,7 @@ export default function App() {
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>setTeamsets(prev=>prev.filter(t=>t.id!==id))}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}} toast={toast}/>}
-      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout}/>}
+      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup}/>}
     </main>
     {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
       <span style={{fontSize:13,fontWeight:600,flex:1}}>{undoBuf.label}</span>
