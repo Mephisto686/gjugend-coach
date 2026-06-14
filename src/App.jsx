@@ -1,11 +1,41 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Dexie from "dexie";
+import { initializeApp } from "firebase/app";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, deleteDoc } from "firebase/firestore";
 import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, Download, Upload, Shuffle, Filter, Clock, Trophy, Bot, RefreshCw, CheckSquare, Square, Dices, ListChecks, Wallet, Phone, MapPin, AlertTriangle, ShieldCheck } from "lucide-react";
 
 // ── DEXIE DB ──────────────────────────────────────────────────────
 const db = new Dexie('GJugendCoachDB');
 db.version(1).stores({ kv: 'key' });
 db.version(2).stores({ kv: 'key', teamsets: '++id,date' });
+
+// ── FIREBASE ──────────────────────────────────────────────────────
+const FB_CONFIG = {
+  apiKey: "AIzaSyDFmUwPai3I2725Skik3hoWOWPw4I0-JTY",
+  authDomain: "scs-jugend-coach.firebaseapp.com",
+  projectId: "scs-jugend-coach",
+  storageBucket: "scs-jugend-coach.firebasestorage.app",
+  messagingSenderId: "968145102711",
+  appId: "1:968145102711:web:3d2bb4fc6c070655696372"
+};
+const fbApp  = initializeApp(FB_CONFIG);
+const fbAuth = getAuth(fbApp);
+const fbDb   = getFirestore(fbApp);
+const SHARED_COLLECTIONS = ["exercises","players","coaches","sessions","tournaments","kassenbuch"];
+
+// Read a shared collection document (stored as one doc per collection for simplicity)
+async function fbRead(col) {
+  try {
+    const snap = await getDoc(doc(fbDb,"shared",col));
+    return snap.exists() ? snap.data().items : null;
+  } catch(e) { console.warn("fbRead",col,e); return null; }
+}
+async function fbWrite(col, items) {
+  try {
+    await setDoc(doc(fbDb,"shared",col),{items, updatedAt: new Date().toISOString()});
+  } catch(e) { console.warn("fbWrite",col,e); }
+}
 
 const APP_VERSION = "3.9.2";
 const BUILTIN_CATS = {
@@ -1034,7 +1064,8 @@ function CoachForm({coach,onSave,onClose}) {
 // ── TEAM PAGE ─────────────────────────────────────────────────────
 function getBdInfo(p) {
   if(!p.birthDate) return p.birthYear?{label:String(p.birthYear),isToday:false,wasPast:false,isSoon:false,date:String(p.birthYear),diff:999}:null;
-  const today=new Date(),parts=p.birthDate.split("-");
+  const now=new Date(),parts=p.birthDate.split("-");
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   const mm=Number(parts[1]),dd=Number(parts[2]);
   const bDay=new Date(today.getFullYear(),mm-1,dd);
   let diff=Math.round((bDay-today)/86400000);
@@ -1936,6 +1967,8 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
         const phases=s.planData.phases;
         const breakMin=s.planData.breakMin||0;
         const totalMin=s.planData.totalMin||s.duration;
+        const totalKids=s.planData.kids||kids;
+        const colMap={ankommen:"#64748b",aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
         let cursor=0;
         const items=[];
         phases.forEach((ph,i)=>{
@@ -1947,57 +1980,70 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
             cursor+=breakMin;
           }
         });
-        return(<div style={{position:"relative",display:"flex",gap:0}}>
-          {/* Timeline sidebar */}
-          <div style={{width:44,flexShrink:0,position:"relative"}}>
-            {items.map((item,idx)=>{
-              const pct=item.minutes?item.minutes/totalMin*100:((item.end-item.start)/totalMin*100);
-              const h=Math.max(32,(item.end-item.start)/totalMin*300);
-              const isBreak=item.type==="break";
-              return(<div key={idx} style={{height:h,display:"flex",flexDirection:"column",alignItems:"center",position:"relative"}}>
-                <div style={{width:2,flex:1,background:isBreak?"#e2e8f0":C.primary,opacity:isBreak?.5:1}}/>
-                {!isBreak&&<div style={{width:10,height:10,borderRadius:"50%",background:C.primary,flexShrink:0,zIndex:1}}/>}
-                <div style={{width:2,flex:isBreak?1:0,background:C.primary,opacity:.3}}/>
-              </div>);
-            })}
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
-              <div style={{width:10,height:10,borderRadius:"50%",background:C.muted,flexShrink:0}}/>
-            </div>
-          </div>
-          {/* Phase cards */}
-          <div style={{flex:1,display:"flex",flexDirection:"column",gap:0}}>
-            {items.map((item,idx)=>{
-              const h=Math.max(32,(item.end-item.start)/totalMin*300);
-              if(item.type==="break") return(
-                <div key={idx} style={{height:h,display:"flex",alignItems:"center",paddingLeft:8}}>
-                  <span style={{fontSize:11,color:C.muted}}>⏸ {item.end-item.start} Min Pause</span>
-                </div>
-              );
-              const ph=item.ph;
-              const colMap={ankommen:"#64748b",aufwaermen:"#e65100",koordination:"#6d28d9",technik:"#1a56db",spielform:"#166534",abschluss:"#9d174d"};
-              const col=colMap[ph.block?.cat||ph.block?.key]||C.primary;
-              const exNames=ph.stations
-                ?ph.stations.map(st=>st.exercise?.title).filter(Boolean)
-                :[ph.exercise?.title].filter(Boolean);
-              return(
-                <div key={idx} style={{height:h,paddingLeft:8,paddingBottom:4,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-                  <div style={{background:"white",borderRadius:8,border:`1.5px solid ${col}44`,padding:"6px 10px",borderLeft:`3px solid ${col}`}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}>
-                      <span style={{fontSize:13}}>{ph.block?.emoji}</span>
-                      <span style={{fontWeight:800,fontSize:13,color:col}}>{ph.block?.label}</span>
-                      <span style={{fontSize:11,color:C.muted,marginLeft:"auto",whiteSpace:"nowrap"}}>⏱ {ph.minutes} Min</span>
-                      <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{item.start}–{item.end}</span>
-                    </div>
-                    {ph.stations&&<div style={{fontSize:11,color:"#7c3aed",marginTop:2}}>🔄 {ph.stations.length} Gruppen · {Math.floor(ph.minutes/ph.stations.length)} Min/Gruppe</div>}
-                    {exNames.length>0&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{exNames.join(" · ")}</div>}
-                  </div>
-                </div>
-              );
-            })}
-            {/* End marker */}
-            <div style={{paddingLeft:8,paddingTop:4}}>
-              <span style={{fontSize:11,color:C.muted,fontWeight:700}}>{cursor} Min — Ende</span>
-            </div>
+        // Helper: render one exercise's detail fields
+        const ExDetail=({ex})=>{
+          if(!ex) return null;
+          return(<div style={{marginTop:8,padding:"10px 12px",background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`}}>
+            {ex.imageUrl&&<img src={ex.imageUrl} alt={ex.title} style={{width:"100%",maxHeight:220,objectFit:"contain",borderRadius:6,marginBottom:10,background:"#f1f5f9"}}/>}
+            {ex.setup&&<div style={{marginBottom:8}}>
+              <div style={{fontSize:10,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>📐 Aufbau</div>
+              <div style={{fontSize:12,lineHeight:1.65,color:C.text}}>{ex.setup}</div>
+            </div>}
+            {ex.description&&<div style={{marginBottom:8}}>
+              <div style={{fontSize:10,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>🎯 Ablauf</div>
+              <div style={{fontSize:12,lineHeight:1.65,color:C.text}}>{ex.description}</div>
+            </div>}
+            {ex.notes&&<div style={{marginBottom:8,padding:"6px 10px",background:"#fffbeb",borderRadius:6,border:"1px solid #fde68a"}}>
+              <div style={{fontSize:10,fontWeight:800,color:"#92400e",textTransform:"uppercase",letterSpacing:.5,marginBottom:3}}>💡 Variationen / Hinweise</div>
+              <div style={{fontSize:12,lineHeight:1.65,color:"#78350f"}}>{ex.notes}</div>
+            </div>}
+            {ex.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
+              {ex.material.map(m=><span key={m} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:C.accentL,color:C.primary,fontWeight:600}}>📦 {m}</span>)}
+            </div>}
+          </div>);
+        };
+        // Phase card component with expand/collapse
+        const PhaseCard=({item})=>{
+          const [open,setOpen]=useState(false);
+          const ph=item.ph;
+          const col=colMap[ph.block?.cat||ph.block?.key]||C.primary;
+          const isParallel=!!ph.stations;
+          const exEntries=isParallel
+            ?ph.stations.map((st,si)=>({ex:st.exercise,label:`Gruppe ${si+1}`,groupKids:Math.floor(totalKids/(ph.stations.length||1))}))
+            :[{ex:ph.exercise,label:null,groupKids:totalKids}];
+          const hasDetail=exEntries.some(e=>e.ex&&(e.ex.setup||e.ex.description||e.ex.notes||e.ex.imageUrl));
+          return(<div style={{marginBottom:6}}>
+            <button onClick={()=>hasDetail&&setOpen(o=>!o)} style={{width:"100%",background:"white",borderRadius:8,border:`1.5px solid ${col}33`,padding:"8px 10px",borderLeft:`3px solid ${col}`,cursor:hasDetail?"pointer":"default",fontFamily:"inherit",textAlign:"left",WebkitTapHighlightColor:"transparent"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:14}}>{ph.block?.emoji}</span>
+                <span style={{fontWeight:800,fontSize:13,color:col,flex:1}}>{ph.block?.label}</span>
+                <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>⏱ {ph.minutes} Min</span>
+                <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",marginLeft:4}}>{item.start}–{item.end}</span>
+                {hasDetail&&<span style={{fontSize:11,color:C.muted,marginLeft:6,transition:"transform .2s",display:"inline-block",transform:open?"rotate(180deg)":"none"}}>▼</span>}
+              </div>
+              {isParallel&&<div style={{fontSize:11,color:"#7c3aed",marginTop:3}}>🔄 {ph.stations.length} Gruppen · {Math.floor(ph.minutes/ph.stations.length)} Min/Gruppe · {Math.floor(totalKids/(ph.stations.length||1))} Kinder/Gruppe</div>}
+              {exEntries.map((e,i)=>e.ex&&<div key={i} style={{fontSize:11,color:C.muted,marginTop:2}}>📍 {isParallel?`G${i+1}: `:""}{e.ex.title}</div>)}
+            </button>
+            {open&&<div style={{paddingLeft:4,paddingRight:0}}>
+              {isParallel?exEntries.map((e,i)=>e.ex&&<div key={i} style={{marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:800,color:"#7c3aed",marginTop:6,marginBottom:2,paddingLeft:4}}>Gruppe {i+1} · {e.groupKids} Kinder · {e.ex.title}</div>
+                <ExDetail ex={e.ex}/>
+              </div>):<ExDetail ex={exEntries[0]?.ex}/>}
+            </div>}
+          </div>);
+        };
+        return(<div>
+          {items.map((item,idx)=>{
+            if(item.type==="break") return(
+              <div key={idx} style={{display:"flex",alignItems:"center",gap:8,padding:"2px 0 6px 6px"}}>
+                <div style={{width:2,height:14,background:"#e2e8f0",borderRadius:1,flexShrink:0}}/>
+                <span style={{fontSize:11,color:C.muted}}>⏸ {item.end-item.start} Min Pause</span>
+              </div>
+            );
+            return <PhaseCard key={idx} item={item}/>;
+          })}
+          <div style={{padding:"4px 0 0 6px"}}>
+            <span style={{fontSize:11,color:C.muted,fontWeight:700}}>{cursor} Min — Ende</span>
           </div>
         </div>);
       })()}
@@ -2038,13 +2084,13 @@ function SessionDetailView({s,players,coaches,exercises,onEdit,onDelete,onClose,
     {s.notes&&<div style={{marginBottom:14,padding:"10px 14px",background:"#fffbeb",borderRadius:8,border:"1px solid #fde68a",fontSize:13,color:C.text,lineHeight:1.6}}>💬 {s.notes}</div>}
     {/* Actions */}
     <div style={{paddingTop:14,borderTop:`1px solid ${C.border}`}}>
-      {(onReplan||onPrint)&&<div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-        {onReplan&&<Btn onClick={onReplan} style={{flex:1,justifyContent:"center"}}>✏️ Plan bearbeiten</Btn>}
-        {onPrint&&<Btn onClick={onPrint} variant="secondary" style={{flex:1,justifyContent:"center"}}>🖨️ PDF erstellen</Btn>}
-      </div>}
+      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+        {onReplan&&<Btn onClick={onReplan} variant="secondary" style={{flex:1,justifyContent:"center",minWidth:120}}>✏️ Plan bearbeiten</Btn>}
+        {onPrint&&<Btn onClick={onPrint} variant="secondary" style={{flex:1,justifyContent:"center",minWidth:100}}>🖨️ PDF erstellen</Btn>}
+        <Btn onClick={onEdit} variant="secondary" style={{flex:1,justifyContent:"center",minWidth:80}}><Edit2 size={13}/> Felder</Btn>
+      </div>
       <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
         <Btn sm variant="danger" onClick={()=>onDelete()}><Trash2 size={13}/> Löschen</Btn>
-        <Btn sm variant="secondary" onClick={onEdit}><Edit2 size={13}/> Felder</Btn>
         <Btn sm onClick={onClose}>Schließen</Btn>
       </div>
     </div>
@@ -2209,7 +2255,6 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
               </div>
               <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
                 <button title="Teams bilden" onClick={()=>setModal({type:"tb",data:{session:s,players:pr.length?pr:players.filter(p=>p.active)}})} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}><Shuffle size={13}/></button>
-                <button title="Bearbeiten" onClick={()=>setModal({type:"session",data:s})} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}><Edit2 size={13}/></button>
                 <button title="Löschen" onClick={()=>onDeleteSession(s.id)} style={{padding:"5px 8px",borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={13}/></button>
               </div>
             </div>
@@ -2753,7 +2798,7 @@ function AddCatForm({onAdd}) {
     <Btn sm onClick={add}><Plus size={13}/> Hinzufügen</Btn>
   </div>);
 }
-function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats}) {
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));
     const t=d.type||"unknown";
@@ -2769,13 +2814,23 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
   const Sec=({title,ch})=><div style={{marginBottom:28}}><h2 style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:14,paddingBottom:8,borderBottom:`2px solid ${C.accentL}`}}>{title}</h2>{ch}</div>;
   return(<div>
     <div style={{marginBottom:20}}><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Einstellungen</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>G-Jugend Coach · v{APP_VERSION}</div></div>
+    {/* Firebase user info */}
+    {firebaseUser&&<div style={{marginBottom:16,padding:"12px 14px",background:"#f0fdf4",borderRadius:12,border:"1.5px solid #bbf7d0",display:"flex",alignItems:"center",gap:12}}>
+      {firebaseUser.photoURL&&<img src={firebaseUser.photoURL} width={36} height={36} style={{borderRadius:"50%"}} alt=""/>}
+      <div style={{flex:1}}>
+        <div style={{fontWeight:800,fontSize:14,color:"#166534"}}>☁️ Verbunden mit Google</div>
+        <div style={{fontSize:12,color:"#15803d",marginTop:2}}>{firebaseUser.displayName||firebaseUser.email}</div>
+        <div style={{fontSize:11,color:"#16a34a",marginTop:1}}>Daten werden automatisch mit allen Trainern synchronisiert</div>
+      </div>
+      <button onClick={onLogout} style={{padding:"5px 12px",borderRadius:8,border:"1px solid #bbf7d0",background:"white",color:"#166534",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Abmelden</button>
+    </div>}
     <Sec title="🤖 Claude API" ch={<div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"16px 18px"}}>
       <div style={{fontSize:13,color:C.muted,marginBottom:10}}>API-Key von <a href="https://console.anthropic.com" target="_blank" style={{color:C.primary}}>console.anthropic.com</a> – wird nur lokal gespeichert.</div>
       <div style={{display:"flex",gap:8}}><input type={kv?"text":"password"} value={ki} onChange={e=>setKi(e.target.value)} placeholder="sk-ant-..." style={{flex:1,padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",fontFamily:"monospace"}}/><Btn sm variant="secondary" onClick={()=>setKv(v=>!v)}>{kv?"🙈":"👁️"}</Btn><Btn sm onClick={()=>{onSaveApiKey(ki.trim());toast(ki.trim()?"API-Key gespeichert":"API-Key entfernt");}}>Speichern</Btn></div>
       {apiKey&&<div style={{marginTop:8,fontSize:12,color:"#16a34a",fontWeight:600}}>✅ API-Key aktiv – KI-Funktionen verfügbar</div>}
     </div>}/>
     <Sec title="📤 Exportieren" ch={<div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={async()=>{await dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast);setLastExportAt(new Date().toISOString());}}/>
+      <EC icon="💾" title="Vollständiges Backup" desc="Alle Daten inkl. Turniere & Kasse" sub={`${exercises.length} Übungen · ${players.length} Spieler · ${sessions.length} Trainings · ${tournaments.length} Turniere · ${kassenbuch.length} Kassenbucheinträge`} fn={doFullBackup}/>
       <EC icon="📚" title="Nur Übungen" desc="Bibliothek teilen" sub={`${exercises.length} Übungen`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"exercises",exercises},`GJugend_Uebungen_${exercises.length}-Eintraege_${todayISO()}.json`,toast)}/>
       <EC icon="👥" title="Team" desc="Spieler & Trainer" sub={`${players.length} Spieler · ${coaches.length} Trainer`} fn={async()=>dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"team",players,coaches},`GJugend_Team_${players.length}-Spieler_${todayISO()}.json`,toast)}/>
       <EC icon="📊" title="Spieler (CSV)" desc="Für Excel & Google Sheets" sub={`${players.length} Spieler`} fn={async()=>dlCsv(players,["name","birthYear","strength","active","jersey","notes"],`GJugend_Spieler_${todayISO()}.csv`,toast)}/>
@@ -2810,7 +2865,8 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
 // ── NAV ───────────────────────────────────────────────────────────
 // ── BIRTHDAY HELPERS ──────────────────────────────────────────────
 function getBirthdayInfo(players) {
-  const today = new Date();
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayMMDD = `${String(today.getMonth()+1).padStart(2,"0")}-${String(today.getDate()).padStart(2,"0")}`;
   const results = [];
   for (const p of players) {
@@ -2890,18 +2946,95 @@ function Nav({page,setPage,counts}) {
 }
 
 // ── APP ───────────────────────────────────────────────────────────
+// ── FIREBASE AUTH HOOK ────────────────────────────────────────────
+function useFirebaseAuth() {
+  const [user, setUser] = useState(undefined); // undefined=loading, null=signed out
+  useEffect(() => {
+    const unsub = onAuthStateChanged(fbAuth, u => setUser(u ?? null));
+    return unsub;
+  }, []);
+  const login  = () => signInWithPopup(fbAuth, new GoogleAuthProvider()).catch(e=>console.warn("login",e));
+  const logout = () => signOut(fbAuth);
+  return { user, login, logout };
+}
+
+// ── FIREBASE SYNC HOOK ────────────────────────────────────────────
+// Syncs a named collection to/from Firestore in real-time.
+// Falls back to local Dexie when offline or not logged in.
+function useCloudStorage(key, def, user) {
+  const [data, setData]   = useState(def);
+  const [ready, setReady] = useState(false);
+  const localKey = "cloud_" + key;
+
+  // Load from local cache first (instant)
+  useEffect(() => {
+    db.kv.get(localKey).then(row => {
+      if (row?.value) setData(JSON.parse(row.value));
+      setReady(true);
+    }).catch(() => setReady(true));
+  }, [localKey]);
+
+  // Subscribe to Firestore when logged in
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(fbDb, "shared", key), snap => {
+      if (snap.exists()) {
+        const items = snap.data().items;
+        setData(items);
+        db.kv.put({ key: localKey, value: JSON.stringify(items) }).catch(() => {});
+      }
+    }, e => console.warn("onSnapshot", key, e));
+    return unsub;
+  }, [user, key, localKey]);
+
+  const save = useCallback((nextOrFn) => {
+    setData(prev => {
+      const next = typeof nextOrFn === 'function' ? nextOrFn(prev) : nextOrFn;
+      // Write locally
+      db.kv.put({ key: localKey, value: JSON.stringify(next) }).catch(() => {});
+      // Write to cloud if logged in
+      if (user) fbWrite(key, next);
+      return next;
+    });
+  }, [user, key, localKey]);
+
+  return [data, save, ready];
+}
+
+// ── BACKUP BANNER ─────────────────────────────────────────────────
+function BackupBanner({lastExportAt,onBackup}) {
+  const [dismissed,setDismissed]=useState(false);
+  if(dismissed) return null;
+  const daysSince=lastExportAt
+    ?Math.floor((Date.now()-new Date(lastExportAt).getTime())/86400000)
+    :null;
+  const needsBackup=daysSince===null||daysSince>=14;
+  if(!needsBackup) return null;
+  const msg=daysSince===null?"Noch kein Backup erstellt":`Letztes Backup vor ${daysSince} Tagen`;
+  return(<div style={{position:"fixed",top:0,left:0,right:0,zIndex:9990,background:"#854d0e",color:"white",padding:"10px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",boxShadow:"0 2px 8px rgba(0,0,0,.2)"}}>
+    <span style={{fontSize:16}}>💾</span>
+    <span style={{flex:1,fontSize:13,fontWeight:600}}>{msg} — Daten sichern empfohlen</span>
+    <button onClick={()=>{onBackup();setDismissed(true);}} style={{padding:"5px 14px",borderRadius:20,border:"2px solid white",background:"transparent",color:"white",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>Jetzt Backup</button>
+    <button onClick={()=>setDismissed(true)} style={{padding:"4px 8px",borderRadius:6,border:"none",background:"rgba(255,255,255,.2)",color:"white",fontWeight:700,fontSize:13,cursor:"pointer",lineHeight:1}}>✕</button>
+  </div>);
+}
+
 export default function App() {
   const [page,setPage]=useState(()=>sessionStorage.getItem("gjPage")||"library");
   useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
   const [pendingSetup,setPendingSetup]=useState(null);
-  const [exercises,  setExercises,  er]=useStorage("exercises",  []);
-  const [players,    setPlayers,    pr]=useStorage("players",    []);
-  const [coaches,    setCoaches,    cr]=useStorage("coaches",    []);
-  const [sessions,   setSessions,   sr]=useStorage("sessions",   []);
-  const [tournaments,setTournaments,tr]=useStorage("tournaments",[]);
-  const [kassenbuch, setKassenbuch, kr]=useStorage("kassenbuch", []);
+  const { user, login, logout } = useFirebaseAuth();
+  const [exercises,  setExercises,  er]=useCloudStorage("exercises",  [], user);
+  const [players,    setPlayers,    pr]=useCloudStorage("players",    [], user);
+  const [coaches,    setCoaches,    cr]=useCloudStorage("coaches",    [], user);
+  const [sessions,   setSessions,   sr]=useCloudStorage("sessions",   [], user);
+  const [tournaments,setTournaments,tr]=useCloudStorage("tournaments",[], user);
+  const [kassenbuch, setKassenbuch, kr]=useCloudStorage("kassenbuch", [], user);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
   const [lastExportAt,setLastExportAt]=useStorage("lastExportAt","");
+  const backupDaysSince=lastExportAt?Math.floor((Date.now()-new Date(lastExportAt).getTime())/86400000):null;
+  const showBackupBanner=backupDaysSince===null||backupDaysSince>=14;
+  const doFullBackup=async()=>{await dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast);setLastExportAt(new Date().toISOString());};
   const [undoBuf,setUndoBuf]=useState(null);
   function showUndo(label,item,restoreFn){
     if(undoBuf?.t)clearTimeout(undoBuf.t);
@@ -2950,7 +3083,19 @@ export default function App() {
     } else if(mode==='merge_players') setPlayers(mergeArr(data.players));
     else if(mode==='replace_players') setPlayers(data.players||[]);
   };
-  if(!er||!pr||!cr||!sr||!tr||!kr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
+  // Auth still loading
+  if(user===undefined||!er||!pr||!cr||!sr||!tr||!kr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
+  // Not logged in - show login screen
+  if(!user) return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,flexDirection:"column",gap:20,padding:24}}>
+    <div style={{fontSize:56}}>⚽</div>
+    <div style={{fontWeight:900,fontSize:24,color:C.text,textAlign:"center"}}>G-Jugend Coach</div>
+    <div style={{color:C.muted,fontSize:14,textAlign:"center",maxWidth:280}}>Melde dich mit deinem Google-Account an, um auf die gemeinsamen Teamdaten zuzugreifen.</div>
+    <button onClick={login} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 24px",borderRadius:12,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:15,boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>
+      <img src="https://www.google.com/favicon.ico" width={18} height={18} alt="G"/>
+      Mit Google anmelden
+    </button>
+    <div style={{fontSize:11,color:C.muted,textAlign:"center",maxWidth:260}}>SC Sternschanze · Nur autorisierte Trainer haben Zugriff</div>
+  </div>);
   return(<div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:C.bg,minHeight:"100vh"}}>
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
@@ -2961,7 +3106,7 @@ export default function App() {
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>setTeamsets(prev=>prev.filter(t=>t.id!==id))}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}} toast={toast}/>}
-      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats}/>}
+      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout}/>}
     </main>
     {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
       <span style={{fontSize:13,fontWeight:600,flex:1}}>{undoBuf.label}</span>
