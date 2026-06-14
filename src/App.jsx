@@ -924,12 +924,9 @@ ${PDF_SCRIPT}</body></html>`;
     {exercises.length===0?<Empty icon="📚" title="Noch keine Übungen" sub="Lege deine erste Übung an oder nutze KI-Import." onAdd={()=>setModal({type:"form",ex:null})} addLabel="Erste Übung erstellen"/>
     :filtered.length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.muted,fontSize:14}}>Keine Übungen für diese Suche / diesen Filter.</div>
     :<div style={{display:"flex",flexDirection:"column",gap:16}}>
-      {(()=>{
-        // Build groups: 3 main cats + "Nicht zugeordnet" for anything else
-        const groups=[...Object.entries(BUILTIN_CATS).map(([k,v])=>({key:k,info:v,exs:filtered.filter(e=>normCat(e.category)===k)}))];
-        const noneExs=filtered.filter(e=>!BUILTIN_CATS[normCat(e.category)]);
-        if(noneExs.length) groups.push({key:"__none__",info:{label:"Nicht zugeordnet",emoji:"❓",color:"#64748b",bg:"#f1f5f9"},exs:noneExs});
-        return groups.filter(g=>g.exs.length>0).map(({key:cat,info:catInfo,exs:catExs})=>{
+      {[...Object.entries(BUILTIN_CATS).map(([k,v])=>({key:k,info:v,exs:filtered.filter(e=>normCat(e.category)===k)})),
+        ...(filtered.filter(e=>!BUILTIN_CATS[normCat(e.category)]).length?[{key:"__none__",info:{label:"Nicht zugeordnet",emoji:"❓",color:"#64748b",bg:"#f1f5f9"},exs:filtered.filter(e=>!BUILTIN_CATS[normCat(e.category)])}]:[])
+      ].filter(g=>g.exs.length>0).map(({key:cat,info:catInfo,exs:catExs})=>{
         if(!catExs.length)return null;
         const isOpen=collapsed[cat]!==true;
         return(<div key={cat}>
@@ -987,7 +984,6 @@ ${PDF_SCRIPT}</body></html>`;
             </div>
           )}
         </div>);
-      })
       })}
     </div>}
     {modal?.type==="ai"&&<Modal title="🤖 KI-Import" onClose={()=>setModal(null)} wide><AIImportModal apiKey={apiKey} onSave={ex=>{onSave(ex);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
@@ -2619,8 +2615,8 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
     {modal?.type==="exDetail"&&modal.data&&<Modal title="Übungsdetail" onClose={()=>setModal(null)}><div><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}><CatBadge cat={modal.data.category}/><Stars value={modal.data.rating} readonly/><span style={{fontSize:13,color:C.muted,marginLeft:"auto"}}>⏱ {modal.data.duration} Min</span></div>{modal.data.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.setup}</div></div>}{modal.data.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.description}</div></div>}{modal.data.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{modal.data.material.map(m=><span key={m} style={{padding:"3px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div>}{modal.data.notes&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {modal.data.notes}</div>}</div></Modal>}
     {modal?.type==="notfall"&&<Modal title="🚨 SOS-Notfall-Plan" onClose={()=>setModal(null)} wide><SOSModal players={players} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="setup"&&<Modal title="Training planen" onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} initialSetup={modal.setup} onPlanManual={setup=>setModal({type:"manual",setup})} onPlanKI={setup=>setModal({type:"ki",setup})} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="manual"&&<Modal title="Manueller Trainingsplan" onClose={()=>setModal(null)} wide><ManualPlanModal setup={modal.setup} exercises={exercises} replaceId={modal.replaceId||null} onSave={s=>{onSaveSession(s);setModal(null);toast("Training gespeichert");}} onSaveExercise={onSaveExercise} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="ki"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><KIPlanModal setup={modal.setup} exercises={exercises} apiKey={apiKey} onSave={s=>{onSaveSession(s);setModal(null);toast("Training gespeichert");}} onSaveExercise={onSaveExercise} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="manual"&&<Modal title="Manueller Trainingsplan" onClose={()=>setModal(null)} wide><ManualTrainingPlanner setup={modal.setup} exercises={exercises} players={players} coachesList={coaches} replaceId={modal.replaceId||null} onSaveSession={s=>{onSaveSession(s);setModal(null);toast("Training gespeichert");}} onSaveExercise={onSaveExercise} apiKey={apiKey} toast={toast} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="ki"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal setup={modal.setup} exercises={exercises} players={players} apiKey={apiKey} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);setModal(null);toast("Training gespeichert");}} replaceId={modal.replaceId||null} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="tb"&&modal.data&&<Modal title="Teams bilden" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players||players.filter(p=>p.active)} onSaveTeams={(teams,go)=>{toast(`${teams.length} Teams erstellt`);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
   </div>);
 }
