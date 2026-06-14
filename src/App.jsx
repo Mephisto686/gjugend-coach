@@ -2901,13 +2901,40 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
   const buildSchedule=()=>{
     const [h,m]=startTime.split(":").map(Number);
     const startMin=h*60+m;
-    const fieldQ=Array.from({length:fields},()=>[]);
-    t.matches.forEach((m,i)=>fieldQ[i%fields].push(m));
+    const slotDur=t.matchDuration+pauseMin;
+    // Conflict-free scheduler: assign each match to earliest (round, field) where
+    // neither team is already playing in that round.
     const slots=[];
-    fieldQ.forEach((q,fi)=>q.forEach((m,ri)=>{
-      const t0=startMin+ri*(t.matchDuration+pauseMin);
-      slots.push({match:m,field:fi+1,startMin:t0});
-    }));
+    const unscheduled=[...t.matches];
+    let round=0;
+    // teamBusy[round] = Set of teamIds playing in that round
+    const teamBusy={};
+    // fieldBusy[round] = number of matches scheduled (max = fields)
+    const fieldBusy={};
+    while(unscheduled.length>0){
+      let placed=false;
+      for(let i=0;i<unscheduled.length;i++){
+        const match=unscheduled[i];
+        // Find first round where both teams are free and a field is available
+        for(let r=round;;r++){
+          const busy=teamBusy[r]||new Set();
+          const fieldCount=fieldBusy[r]||0;
+          if(!busy.has(match.homeId)&&!busy.has(match.awayId)&&fieldCount<fields){
+            // Schedule it
+            if(!teamBusy[r]) teamBusy[r]=new Set();
+            teamBusy[r].add(match.homeId);
+            teamBusy[r].add(match.awayId);
+            fieldBusy[r]=(fieldBusy[r]||0)+1;
+            slots.push({match,field:fieldBusy[r],startMin:startMin+r*slotDur,round:r});
+            unscheduled.splice(i,1);
+            placed=true;
+            break;
+          }
+        }
+        if(placed) break;
+      }
+      if(!placed) break; // safety exit
+    }
     return slots.sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
   };
   const fmtTime=m=>{const hh=Math.floor(m/60),mm=m%60;return`${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;};
