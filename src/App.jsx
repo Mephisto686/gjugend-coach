@@ -280,17 +280,32 @@ function buildTeams(players,numTeams,mode,skillDist) {
     // Jedes Stärke-Level gleichmäßig über alle Teams verteilen
     [4,3,2,1].forEach(s=>shuffle(players.filter(p=>p.strength===s)).forEach((p,i)=>teams[i%n].players.push(p)));
   } else if(mode==="profile"&&skillDist?.profiles) {
-    // Profile-Modus: jedes Team hat ein Stärke-Profil (4=sehr stark, 3=stark, 2=mittel, 1=schwach)
-    // Spieler nach Stärke sortieren (absteigend), dann auf Teams nach Profil verteilen
-    const profiles=skillDist.profiles; // Array der Länge n, Werte 1-4
-    // Spieler global sortieren (absteigend)
-    const sorted=[...players].sort((a,b)=>b.strength-a.strength);
-    // Für jedes Team: Ziel-Ø-Stärke aus Profil berechnen
-    // Greedy: weise jedem Spieler das Team zu das seinem Stärke-Profil am besten entspricht
-    // Einfacher: teams nach Profil-Stärke absteigend sortieren, dann Snake-Draft
-    const teamOrder=[...teams.keys()].sort((a,b)=>profiles[b]-profiles[a]);
-    const reordered=teamOrder.map(i=>teams[i]);
-    snakeDraft(sorted,reordered);
+    // Profile-Modus: Profil bestimmt Mischverhältnis aus oberer/unterer Spielerhälfte.
+    // 4=Sehr stark: 80% aus stärkerer Hälfte, 20% aus schwächerer
+    // 3=Stark:      60% / 40%
+    // 2=Mittel:     40% / 60%
+    // 1=Schwach:    20% / 80%
+    const profiles=skillDist.profiles.slice(0,n);
+    const sorted=shuffle([...players]).sort((a,b)=>b.strength-a.strength);
+    const total=sorted.length;
+    const perTeam=Math.floor(total/n);
+    const half=Math.floor(total/2);
+    const upperRatio={4:0.8,3:0.6,2:0.4,1:0.2};
+    let remUpper=[...sorted.slice(0,half)];
+    let remLower=[...sorted.slice(half)];
+    // Stärkste Teams zuerst bedienen
+    const teamOrder=[...teams.keys()].sort((a,b)=>(profiles[b]||2)-(profiles[a]||2));
+    teamOrder.forEach(ti=>{
+      const prof=profiles[ti]||2;
+      const nUp=Math.round(perTeam*(upperRatio[prof]||0.5));
+      const nLow=perTeam-nUp;
+      const takenUp=remUpper.splice(0,nUp);
+      const takenLow=remLower.splice(0,nLow);
+      [...takenUp,...takenLow].forEach(p=>teams[ti].players.push(p));
+    });
+    // Restliche Spieler verteilen
+    const rest=[...remUpper,...remLower];
+    rest.forEach((p,i)=>teams[i%n].players.push(p));
   } else if(mode==="skill"&&skillDist) {
     const {strong:nS=0,weak:nW=0}=skillDist;
     const nM=n-nS-nW;
@@ -3151,10 +3166,10 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {buildSchedule().reduce((rows,sl)=>{
           const last=rows[rows.length-1];
-          if(!last||last.startMin!==sl.startMin) rows.push({startMin:sl.startMin,slots:[]});
+          if(!last||last.startMin!==sl.startMin) rows.push({startMin:sl.startMin,round:sl.round??0,slots:[],idx:rows.length});
           rows[rows.length-1].slots.push(sl);
           return rows;
-        },[]).map((row,ri)=>{
+        },[]).map((row,ri,allRows)=>{
           const allTeamIds=[...new Set(row.slots.flatMap(sl=>[sl.match.homeId,sl.match.awayId]))];
           const allTeams=allTeamIds.map(gt).filter(Boolean);
           const kidCount=allTeams.reduce((s,tm)=>{
@@ -3192,7 +3207,7 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
             </div>
           </div>
           {/* Pause editor between rounds */}
-          {ri<allRows.length-1&&function(){
+          {ri<allRowsLen-1&&function(){
             const rnd=row.round;
             const pval=slotPauses[rnd];
             return <PauseEditor round={rnd} value={pval??pauseMin} defaultVal={pauseMin} isCustom={pval!==undefined&&pval!==pauseMin} onChange={setSlotPauses}/>;
