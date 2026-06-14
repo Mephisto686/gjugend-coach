@@ -2902,39 +2902,54 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
     const [h,m]=startTime.split(":").map(Number);
     const startMin=h*60+m;
     const slotDur=t.matchDuration+pauseMin;
-    // Conflict-free scheduler: assign each match to earliest (round, field) where
-    // neither team is already playing in that round.
-    const slots=[];
-    const unscheduled=[...t.matches];
-    let round=0;
-    // teamBusy[round] = Set of teamIds playing in that round
-    const teamBusy={};
-    // fieldBusy[round] = number of matches scheduled (max = fields)
-    const fieldBusy={};
-    while(unscheduled.length>0){
-      let placed=false;
-      for(let i=0;i<unscheduled.length;i++){
-        const match=unscheduled[i];
-        // Find first round where both teams are free and a field is available
-        for(let r=round;;r++){
-          const busy=teamBusy[r]||new Set();
-          const fieldCount=fieldBusy[r]||0;
-          if(!busy.has(match.homeId)&&!busy.has(match.awayId)&&fieldCount<fields){
-            // Schedule it
-            if(!teamBusy[r]) teamBusy[r]=new Set();
-            teamBusy[r].add(match.homeId);
-            teamBusy[r].add(match.awayId);
-            fieldBusy[r]=(fieldBusy[r]||0)+1;
-            slots.push({match,field:fieldBusy[r],startMin:startMin+r*slotDur,round:r});
-            unscheduled.splice(i,1);
-            placed=true;
-            break;
+
+    // Optimal conflict-free scheduler via iterative deepening backtracking.
+    // Sorts matches by "hardest to place first" then tries min rounds, then +1 etc.
+    const matches=[...t.matches];
+    const n=matches.length;
+    // Sort: most-connected teams first (harder to schedule)
+    const teamDeg={};
+    matches.forEach(m=>{teamDeg[m.homeId]=(teamDeg[m.homeId]||0)+1;teamDeg[m.awayId]=(teamDeg[m.awayId]||0)+1;});
+    const sorted=[...matches].sort((a,b)=>((teamDeg[b.homeId]+teamDeg[b.awayId])-(teamDeg[a.homeId]+teamDeg[a.awayId])));
+
+    const minRounds=Math.ceil(n/fields);
+    let assignment=null;
+
+    for(let maxR=minRounds;maxR<=n&&!assignment;maxR++){
+      const asgn=new Array(n).fill(-1);
+      const roundTeams={};  // round -> Set
+      const roundCnt={};    // round -> count
+
+      const bt=(idx)=>{
+        if(idx===n) return true;
+        const {homeId,awayId}=sorted[idx];
+        for(let r=0;r<maxR;r++){
+          const busy=roundTeams[r]||(roundTeams[r]=new Set());
+          const cnt=roundCnt[r]||0;
+          if(!busy.has(homeId)&&!busy.has(awayId)&&cnt<fields){
+            busy.add(homeId);busy.add(awayId);
+            roundCnt[r]=cnt+1;
+            asgn[idx]=r;
+            if(bt(idx+1)) return true;
+            busy.delete(homeId);busy.delete(awayId);
+            roundCnt[r]=cnt;
+            asgn[idx]=-1;
           }
         }
-        if(placed) break;
-      }
-      if(!placed) break; // safety exit
+        return false;
+      };
+
+      if(bt(0)) assignment={asgn,sorted};
     }
+
+    if(!assignment) return []; // fallback (shouldn't happen)
+
+    const slots=[];
+    const fieldUsed={};
+    assignment.asgn.forEach((r,i)=>{
+      fieldUsed[r]=(fieldUsed[r]||0)+1;
+      slots.push({match:assignment.sorted[i],field:fieldUsed[r],startMin:startMin+r*slotDur,round:r});
+    });
     return slots.sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
   };
   const fmtTime=m=>{const hh=Math.floor(m/60),mm=m%60;return`${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;};
