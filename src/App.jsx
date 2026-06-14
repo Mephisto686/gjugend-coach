@@ -2712,42 +2712,63 @@ function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose,initi
 // ── TURNIER PAGE ──────────────────────────────────────────────────
 function TournamentForm({onSave,onClose}) {
   const [form,setForm]=useState({name:"",date:todayISO(),matchDuration:8,fields:1,notes:""});
-  const [teams,setTeams]=useState([{id:uid(),name:"Team 1",color:TCOLORS[0],club:""},{id:uid(),name:"Team 2",color:TCOLORS[1],club:""}]);
-  const [excludePairs,setExcludePairs]=useState([]); // [[idA,idB],...]
-  const [clubOverrides,setClubOverrides]=useState([]); // same-club pairs that ARE allowed
+  // Club setup: {name, count}
+  const [clubs,setClubs]=useState([{id:uid(),name:"",count:1}]);
+  // Derived teams (generated from clubs)
+  const [teams,setTeams]=useState([]);
+  const [excludePairs,setExcludePairs]=useState([]);
+  const [clubOverrides,setClubOverrides]=useState([]);
   const [showExclusions,setShowExclusions]=useState(false);
+  const [step,setStep]=useState("clubs"); // clubs | teams
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const addTeam=()=>setTeams(t=>[...t,{id:uid(),name:`Team ${t.length+1}`,color:TCOLORS[t.length%TCOLORS.length],club:""}]);
-  const updateTeam=(id,k,v)=>setTeams(ts=>ts.map(t=>t.id===id?{...t,[k]:v}:t));
 
+  // Generate teams from clubs
+  const buildTeamsFromClubs=()=>{
+    let colorIdx=0;
+    const built=[];
+    clubs.forEach(cl=>{
+      const name=cl.name.trim()||"Verein";
+      const n=Number(cl.count)||1;
+      for(let i=1;i<=n;i++){
+        built.push({id:uid(),name:n>1?`${name} ${i}`:name,club:name,color:TCOLORS[colorIdx%TCOLORS.length]});
+        colorIdx++;
+      }
+    });
+    return built;
+  };
+
+  const goToTeams=()=>{
+    setTeams(buildTeamsFromClubs());
+    setExcludePairs([]);
+    setClubOverrides([]);
+    setStep("teams");
+  };
+
+  const updateTeam=(id,k,v)=>setTeams(ts=>ts.map(t=>t.id===id?{...t,[k]:v}:t));
   const togglePair=(a,b)=>{
     const key=[a,b].sort().join("|");
-    setExcludePairs(prev=>{
-      const exists=prev.some(p=>p.sort().join("|")===key);
-      return exists?prev.filter(p=>p.sort().join("|")!==key):[...prev,[a,b]];
-    });
+    setExcludePairs(prev=>prev.some(p=>p.sort().join("|")===key)?prev.filter(p=>p.sort().join("|")!==key):[...prev,[a,b]]);
   };
   const isPairExcluded=(a,b)=>excludePairs.some(p=>p.sort().join("|")===[a,b].sort().join("|"));
 
-  // Compute same-club auto-exclusions
   const sameClubPairs=[];
   teams.forEach((t1,i)=>teams.forEach((t2,j)=>{
     if(i>=j)return;
     if(t1.club&&t2.club&&t1.club.trim()&&t1.club.trim()===t2.club.trim())
       sameClubPairs.push([t1.id,t2.id]);
   }));
-  const allExcluded=[...excludePairs,...sameClubPairs];
   const effectiveMatches=()=>{
-    const excluded=new Set(allExcluded.map(([a,b])=>[a,b].sort().join("|")));
-    clubOverrides.forEach(k=>excluded.delete(k));
-    let count=0;
-    for(let i=0;i<teams.length;i++) for(let j=i+1;j<teams.length;j++){
-      if(!excluded.has([teams[i].id,teams[j].id].sort().join("|"))) count++;
-    }
-    return count;
+    const excl=new Set([...excludePairs,...sameClubPairs].map(([a,b])=>[a,b].sort().join("|")));
+    clubOverrides.forEach(k=>excl.delete(k));
+    let c=0;
+    for(let i=0;i<teams.length;i++) for(let j=i+1;j<teams.length;j++)
+      if(!excl.has([teams[i].id,teams[j].id].sort().join("|"))) c++;
+    return c;
   };
+  const allExcluded=[...excludePairs,...sameClubPairs];
 
-  return(<div>
+  // STEP 1: Club setup
+  if(step==="clubs") return(<div>
     <Inp label="Turniername *" value={form.name} onChange={e=>set("name",e.target.value)} placeholder="z.B. Herbstturnier"/>
     <div style={{marginBottom:14}}>
       <Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
@@ -2757,90 +2778,111 @@ function TournamentForm({onSave,onClose}) {
       </div>
     </div>
 
-    {/* Teams */}
-    <div style={{marginTop:14,marginBottom:14}}>
-      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Teams ({teams.length})</label>
-      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
-        {teams.map(t=><div key={t.id} style={{borderRadius:8,background:"#f8fafc",border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px"}}>
-            <div style={{width:16,height:16,borderRadius:"50%",background:t.color,flexShrink:0}}/>
-            <input value={t.name} onChange={e=>updateTeam(t.id,"name",e.target.value)}
-              style={{flex:1,border:"none",background:"transparent",fontSize:14,fontWeight:700,color:C.text,outline:"none"}} placeholder="Teamname"/>
-            {teams.length>2&&<button onClick={()=>setTeams(ts=>ts.filter(x=>x.id!==t.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:2,lineHeight:1}}>✕</button>}
+    <div style={{marginBottom:16}}>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Vereine & Teams</label>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+        {clubs.map((cl,ci)=><div key={cl.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,background:"#f8fafc",border:`1.5px solid ${C.border}`}}>
+          <span style={{fontSize:18,flexShrink:0}}>🏛</span>
+          <input value={cl.name} onChange={e=>setClubs(cs=>cs.map(c=>c.id===cl.id?{...c,name:e.target.value}:c))}
+            placeholder="Vereinsname" style={{flex:1,border:"none",background:"transparent",fontSize:14,fontWeight:700,color:C.text,outline:"none"}}/>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+            <span style={{fontSize:12,color:C.muted,fontWeight:600}}>Teams:</span>
+            <Stepper value={cl.count} onChange={v=>setClubs(cs=>cs.map(c=>c.id===cl.id?{...c,count:Math.max(1,v)}:c))} min={1} max={8}/>
           </div>
-          <div style={{padding:"0 12px 8px 12px",display:"flex",alignItems:"center",gap:6}}>
-            <span style={{fontSize:11,color:C.muted,fontWeight:600,flexShrink:0}}>🏛 Verein:</span>
-            <input value={t.club||""} onChange={e=>updateTeam(t.id,"club",e.target.value)}
-              style={{flex:1,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px",fontSize:12,color:C.text,outline:"none",background:"white"}}
-              placeholder="z.B. SC Sternschanze (optional)"/>
-          </div>
+          {clubs.length>1&&<button onClick={()=>setClubs(cs=>cs.filter(c=>c.id!==cl.id))} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:2,lineHeight:1,flexShrink:0}}>✕</button>}
         </div>)}
       </div>
-      <Btn sm onClick={addTeam}><Plus size={13}/> Team hinzufügen</Btn>
-      {sameClubPairs.length>0&&<div style={{marginTop:8,padding:"6px 10px",borderRadius:8,background:"#eff6ff",border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af"}}>
-        🏛 {sameClubPairs.filter(([a,b])=>!clubOverrides.includes([a,b].sort().join("|"))).length} Vereins-Paar{sameClubPairs.length>1?"e":""} automatisch ausgeschlossen
-        {sameClubPairs.some(([a,b])=>clubOverrides.includes([a,b].sort().join("|")))&&
-          <span style={{marginLeft:6,color:"#92400e"}}>· {clubOverrides.length} manuell aktiviert</span>}
+      <Btn sm variant="secondary" onClick={()=>setClubs(cs=>[...cs,{id:uid(),name:"",count:1}])}><Plus size={13}/> Verein hinzufügen</Btn>
+      {/* Preview */}
+      {clubs.some(c=>c.name.trim())&&<div style={{marginTop:12,padding:"10px 12px",borderRadius:8,background:"white",border:`1px solid ${C.border}`}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Vorschau Teams</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+          {buildTeamsFromClubs().map((t,i)=><span key={i} style={{fontSize:12,padding:"2px 10px",borderRadius:20,background:t.color+"33",border:`1px solid ${t.color}66`,color:C.text,fontWeight:600}}>{t.name}</span>)}
+        </div>
+        <div style={{fontSize:11,color:C.muted,marginTop:6}}>{buildTeamsFromClubs().length} Teams · {buildTeamsFromClubs().length*(buildTeamsFromClubs().length-1)/2} mögliche Spiele</div>
       </div>}
     </div>
+    <Txta label="Notizen" value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2}/>
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${C.border}`}}>
+      <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
+      <Btn onClick={goToTeams} disabled={!form.name.trim()||buildTeamsFromClubs().length<2}>Weiter →</Btn>
+    </div>
+  </div>);
 
-    {/* Manual exclusions */}
-    {teams.length>=2&&<div style={{marginBottom:14}}>
+  // STEP 2: Team names + exclusions
+  return(<div>
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+      <button onClick={()=>setStep("clubs")} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontFamily:"inherit",fontSize:13,color:C.muted}}>← Zurück</button>
+      <div style={{fontWeight:800,fontSize:16,color:C.text,flex:1}}>{form.name}</div>
+    </div>
+
+    {/* Team list grouped by club */}
+    <div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Teams ({teams.length})</label>
+      {/* Group by club */}
+      {Object.entries(teams.reduce((g,t)=>{const k=t.club||"Ohne Verein";if(!g[k])g[k]=[];g[k].push(t);return g;},{})).map(([club,clubTeams])=>(
+        <div key={club} style={{marginBottom:10}}>
+          <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>🏛 {club}</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {clubTeams.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:8,background:"#f8fafc",border:`1.5px solid ${C.border}`}}>
+              <div style={{width:14,height:14,borderRadius:"50%",background:t.color,flexShrink:0}}/>
+              <input value={t.name} onChange={e=>updateTeam(t.id,"name",e.target.value)}
+                style={{flex:1,border:"none",background:"transparent",fontSize:14,fontWeight:600,color:C.text,outline:"none"}}/>
+            </div>)}
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {/* Exclusions */}
+    <div style={{marginBottom:14}}>
       <button onClick={()=>setShowExclusions(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700,color:C.primary,background:"none",border:"none",cursor:"pointer",padding:0,fontFamily:"inherit",marginBottom:showExclusions?10:0}}>
-        {showExclusions?"▲":"▼"} Manuelle Ausschlüsse {excludePairs.length>0?`(${excludePairs.length})`:""}
+        {showExclusions?"▲":"▼"} Paarungen verwalten
+        {(excludePairs.length>0||sameClubPairs.length>0)&&<span style={{fontSize:11,padding:"1px 7px",borderRadius:20,background:C.accentL,color:C.primary,marginLeft:4}}>{allExcluded.length-clubOverrides.length} ausgeschlossen</span>}
       </button>
-      {showExclusions&&<div>
-        <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Diese Paarungen werden nicht im Spielplan berücksichtigt:</div>
-        <div style={{display:"flex",flexDirection:"column",gap:4}}>
-          {teams.map((t1,i)=>teams.slice(i+1).map(t2=>{
-            const excl=isPairExcluded(t1.id,t2.id);
-            const sameClub=t1.club&&t2.club&&t1.club.trim()&&t1.club.trim()===t2.club.trim();
-            if(sameClub) {
-              const key=[t1.id,t2.id].sort().join("|");
-              const overridden=clubOverrides.includes(key);
-              return(<div key={t1.id+t2.id} onClick={()=>setClubOverrides(prev=>overridden?prev.filter(k=>k!==key):[...prev,key])}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${overridden?"#bbf7d0":"#bfdbfe"}`,background:overridden?"#f0fdf4":"#eff6ff",cursor:"pointer"}}>
-                <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${overridden?"#16a34a":"#3b82f6"}`,background:overridden?"#16a34a":"#3b82f6",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <span style={{color:"white",fontSize:10,lineHeight:1}}>{overridden?"✓":"🏛"}</span>
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
-                  <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t1.color}}/>
-                  <span style={{fontSize:13,fontWeight:600,color:C.text}}>{t1.name}</span>
-                  <span style={{color:C.muted,fontSize:12}}>vs</span>
-                  <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t2.color}}/>
-                  <span style={{fontSize:13,fontWeight:600,color:C.text}}>{t2.name}</span>
-                </div>
-                <span style={{fontSize:11,fontWeight:700,color:overridden?"#16a34a":"#1e40af"}}>{overridden?"✓ Wird gespielt":"🏛 Gleicher Verein"}</span>
-              </div>);
-            }
-            return(<div key={t1.id+t2.id} onClick={()=>togglePair(t1.id,t2.id)}
+      {showExclusions&&<div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {teams.map((t1,i)=>teams.slice(i+1).map(t2=>{
+          const excl=isPairExcluded(t1.id,t2.id);
+          const sameClub=t1.club&&t2.club&&t1.club.trim()&&t1.club.trim()===t2.club.trim();
+          const key=[t1.id,t2.id].sort().join("|");
+          const overridden=clubOverrides.includes(key);
+          if(sameClub) return(
+            <div key={key} onClick={()=>setClubOverrides(prev=>overridden?prev.filter(k=>k!==key):[...prev,key])}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${overridden?"#bbf7d0":"#bfdbfe"}`,background:overridden?"#f0fdf4":"#eff6ff",cursor:"pointer"}}>
+              <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${overridden?"#16a34a":"#3b82f6"}`,background:overridden?"#16a34a":"#3b82f6",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{color:"white",fontSize:10,lineHeight:1}}>{overridden?"✓":"🏛"}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t1.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t1.name}</span>
+                <span style={{color:C.muted,fontSize:12}}>vs</span>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t2.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t2.name}</span>
+              </div>
+              <span style={{fontSize:11,fontWeight:700,color:overridden?"#16a34a":"#1e40af"}}>{overridden?"✓ Wird gespielt":"🏛 Gleicher Verein"}</span>
+            </div>);
+          return(
+            <div key={key} onClick={()=>togglePair(t1.id,t2.id)}
               style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${excl?"#fca5a5":C.border}`,background:excl?"#fff5f5":"white",cursor:"pointer"}}>
               <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${excl?"#ef4444":C.border}`,background:excl?"#ef4444":"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                 {excl&&<span style={{color:"white",fontSize:11,lineHeight:1}}>✕</span>}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
-                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t1.color}}/>
-                <span style={{fontSize:13,fontWeight:600,color:C.text}}>{t1.name}</span>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t1.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t1.name}</span>
                 <span style={{color:C.muted,fontSize:12}}>vs</span>
-                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t2.color}}/>
-                <span style={{fontSize:13,fontWeight:600,color:C.text}}>{t2.name}</span>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t2.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t2.name}</span>
               </div>
               {excl&&<span style={{fontSize:11,color:"#ef4444",fontWeight:700}}>Ausgeschlossen</span>}
             </div>);
-          }))}
-        </div>
+        }))}
       </div>}
-    </div>}
+    </div>
 
-    <div style={{fontSize:12,color:C.muted,marginBottom:14}}>
-      → {effectiveMatches()} Spiele (Round Robin{allExcluded.length>0?`, ${allExcluded.length} Paar${allExcluded.length>1?"e":""} ausgeschlossen`:""})</div>
-    <Txta label="Notizen" value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2}/>
+    <div style={{fontSize:12,color:C.muted,marginBottom:14}}>→ {effectiveMatches()} Spiele (Round Robin{allExcluded.length-clubOverrides.length>0?`, ${allExcluded.length-clubOverrides.length} Paar${allExcluded.length-clubOverrides.length>1?"e":""} ausgeschlossen`:""})</div>
     <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${C.border}`}}>
       <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
       <Btn onClick={()=>{
         if(!form.name.trim()||teams.length<2)return;
         onSave({...form,id:uid(),createdAt:now(),teams,excludePairs,clubOverrides,matches:generateRR(teams,excludePairs,clubOverrides)});
-      }} disabled={!form.name.trim()||teams.length<2}>Turnier erstellen</Btn>
+      }} disabled={teams.length<2}>Turnier erstellen</Btn>
     </div>
   </div>);
 }
