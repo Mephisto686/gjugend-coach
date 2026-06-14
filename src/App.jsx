@@ -279,10 +279,18 @@ function buildTeams(players,numTeams,mode,skillDist) {
   } else if(mode==="mixed") {
     // Jedes Stärke-Level gleichmäßig über alle Teams verteilen
     [4,3,2,1].forEach(s=>shuffle(players.filter(p=>p.strength===s)).forEach((p,i)=>teams[i%n].players.push(p)));
-  } else if(mode==="challenge") {
-    // Starke gegen starke (geclustert): Team 0 bekommt die Stärksten
+  } else if(mode==="profile"&&skillDist?.profiles) {
+    // Profile-Modus: jedes Team hat ein Stärke-Profil (4=sehr stark, 3=stark, 2=mittel, 1=schwach)
+    // Spieler nach Stärke sortieren (absteigend), dann auf Teams nach Profil verteilen
+    const profiles=skillDist.profiles; // Array der Länge n, Werte 1-4
+    // Spieler global sortieren (absteigend)
     const sorted=[...players].sort((a,b)=>b.strength-a.strength);
-    sorted.forEach((p,i)=>teams[Math.min(n-1,Math.floor(i/Math.ceil(players.length/n)))].players.push(p));
+    // Für jedes Team: Ziel-Ø-Stärke aus Profil berechnen
+    // Greedy: weise jedem Spieler das Team zu das seinem Stärke-Profil am besten entspricht
+    // Einfacher: teams nach Profil-Stärke absteigend sortieren, dann Snake-Draft
+    const teamOrder=[...teams.keys()].sort((a,b)=>profiles[b]-profiles[a]);
+    const reordered=teamOrder.map(i=>teams[i]);
+    snakeDraft(sorted,reordered);
   } else if(mode==="skill"&&skillDist) {
     const {strong:nS=0,weak:nW=0}=skillDist;
     const nM=n-nS-nW;
@@ -1417,11 +1425,12 @@ function TeamBuilderModal({availablePlayers,onSaveTeams,onClose,onSaveTeamset}) 
   const [numTeams,setNumTeams]=useState(defTeams);
   const [mode,setMode]=useState("balanced");
   const [skillDist,setSkillDist]=useState({strong:0,weak:0});
+  const [profiles,setProfiles]=useState(Array.from({length:4},()=>2));
   const [teams,setTeams]=useState([]);
   const [selIds,setSelIds]=useState(activeDef.map(p=>p.id));
   const sel=availablePlayers.filter(p=>selIds.includes(p.id));
   const perTeam=sel.length?Math.round(sel.length/numTeams):3;
-  const generate=()=>setTeams(buildTeams(sel,numTeams,mode,skillDist));
+  const generate=()=>{const sd=mode==="profile"?{...skillDist,profiles:profiles.slice(0,numTeams)}:skillDist;setTeams(buildTeams(sel,numTeams,mode,sd));};
   const mb=(k,l,d)=><button onClick={()=>setMode(k)} style={{flex:1,minWidth:110,padding:"8px 10px",borderRadius:8,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><div style={{fontWeight:700,fontSize:13,color:mode===k?C.primary:C.text}}>{l}</div><div style={{fontSize:11,color:C.muted}}>{d}</div></button>;
   return(<div>
     <div style={{marginBottom:16}}>
@@ -1439,10 +1448,11 @@ function TeamBuilderModal({availablePlayers,onSaveTeams,onClose,onSaveTeamset}) 
       <div>
         <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label>
         <div style={{display:"flex",flexDirection:"column",gap:5}}>
-          {[["balanced","⚖️ Ausgeglichen","Stärken gleichmäßig verteilt"],["skill","📊 Stärke-Gruppen","Ich bestimme wie viele stark/schwach"],["mixed","🎨 Durchmischt","Alle Level in jedem Team"],["challenge","⚡ Herausforderung","Stark vs. Schwach"],["random","🎲 Zufällig","Komplett zufällig"]].map(([k,l,d])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 10px",borderRadius:7,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",gap:8,alignItems:"center"}}><div style={{flex:1}}><span style={{fontWeight:700,fontSize:12,color:mode===k?C.primary:C.text}}>{l}</span><span style={{fontSize:11,color:C.muted,marginLeft:4}}>{d}</span></div></button>)}
+          {[["balanced","⚖️ Ausgeglichen","Stärken gleichmäßig verteilt"],["profile","📊 Stärkeverteilung","Pro Team Stärke-Profil wählen"],["mixed","🎨 Durchmischt","Alle Level in jedem Team"],["skill","📋 Stärke-Gruppen","Anzahl stark/schwach bestimmen"],["random","🎲 Zufällig","Komplett zufällig"]].map(([k,l,d])=><button key={k} onClick={()=>setMode(k)} style={{padding:"6px 10px",borderRadius:7,border:`2px solid ${mode===k?C.primary:C.border}`,background:mode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit",display:"flex",gap:8,alignItems:"center"}}><div style={{flex:1}}><span style={{fontWeight:700,fontSize:12,color:mode===k?C.primary:C.text}}>{l}</span><span style={{fontSize:11,color:C.muted,marginLeft:4}}>{d}</span></div></button>)}
         </div>
       </div>
     </div>
+    {mode==="profile"&&<ProfileConfig numTeams={numTeams} profiles={profiles} setProfiles={setProfiles}/>}
     {mode==="skill"&&<div style={{background:"#f0f9ff",borderRadius:10,padding:"12px 14px",marginBottom:14,border:"1px solid #bae6fd"}}>
       <div style={{fontSize:12,fontWeight:700,color:"#0369a1",marginBottom:10}}>📊 Stärke-Verteilung ({numTeams} Teams gesamt)</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
@@ -2435,6 +2445,38 @@ function PlayerPicker({allPlayers,selIds,setSelIds}) {
   </div>);
 }
 
+function ProfileConfig({numTeams,profiles,setProfiles}) {
+  const PLEVELS=[
+    {v:4,label:"💪 Sehr stark",color:"#dc2626",bg:"#fee2e2"},
+    {v:3,label:"⭐ Stark",     color:"#d97706",bg:"#fef3c7"},
+    {v:2,label:"➡️ Mittel",    color:"#2563eb",bg:"#eff6ff"},
+    {v:1,label:"🌱 Schwach",   color:"#16a34a",bg:"#dcfce7"},
+  ];
+  // Ensure profiles array has correct length
+  const profs=Array.from({length:numTeams},(_,i)=>profiles[i]??2);
+  const setProf=(i,v)=>{const p=[...profs];p[i]=v;setProfiles(p);};
+  return(<div style={{marginBottom:14}}>
+    <div style={{fontSize:11,color:C.muted,marginBottom:8}}>Wähle für jedes Team das gewünschte Stärke-Profil. Der Algorithmus verteilt Spieler entsprechend.</div>
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      {profs.map((pv,i)=>{
+        const cur=PLEVELS.find(l=>l.v===pv)||PLEVELS[2];
+        return(<div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:13,fontWeight:700,color:C.muted,minWidth:52}}>Team {i+1}</span>
+          <div style={{display:"flex",gap:4,flex:1,flexWrap:"wrap"}}>
+            {PLEVELS.map(pl=><button key={pl.v} onClick={()=>setProf(i,pl.v)}
+              style={{flex:1,minWidth:60,padding:"5px 6px",borderRadius:8,border:`2px solid ${pv===pl.v?pl.color:C.border}`,background:pv===pl.v?pl.bg:"white",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,color:pv===pl.v?pl.color:C.muted,textAlign:"center"}}>
+              {pl.label}
+            </button>)}
+          </div>
+        </div>);
+      })}
+    </div>
+    <div style={{marginTop:8,padding:"6px 10px",borderRadius:8,background:"#f8fafc",border:`1px solid ${C.border}`,fontSize:11,color:C.muted}}>
+      Verteilung: {["💪","⭐","➡️","🌱"].map((e,j)=>{const cnt=profs.filter(p=>p===4-j).length;return cnt>0?`${e}×${cnt}`:null;}).filter(Boolean).join("  ·  ")}
+    </div>
+  </div>);
+}
+
 function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
   const [genMode,setGenMode]=useState("balanced");
   const [numTeams,setNumTeams]=useState(ts.teams.length||Math.max(2,Math.round(allPlayers.length/3)));
@@ -2445,6 +2487,7 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
   });
   const [dragInfo,setDragInfo]=useState(null); // {playerId, fromTeamId}
   const [skillDist,setSkillDist]=useState({strong:0,weak:0});
+  const [profiles,setProfiles]=useState(Array.from({length:4},()=>2)); // default: alle Mittel
   const [tab,setTab]=useState(ts.teams.length>0?"manual":"generate"); // generate | manual
 
   const sel=allPlayers.filter(p=>selIds.includes(p.id));
@@ -2455,7 +2498,8 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
   const unassigned=sel.filter(p=>!assignedIds.includes(p.id));
 
   const generate=()=>{
-    const teams=buildTeams(sel,numTeams,genMode,skillDist);
+    const sd=genMode==="profile"?{...skillDist,profiles:profiles.slice(0,numTeams)}:skillDist;
+    const teams=buildTeams(sel,numTeams,genMode,sd);
     setTs(prev=>({...prev,teams}));
     setTab("manual");
   };
@@ -2517,10 +2561,11 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
         <div>
           <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label>
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            {[["balanced","⚖️ Ausgeglichen","Stärken gleichmäßig"],["mixed","🎨 Durchmischt","Alle Level in jedem Team"],["challenge","⚡ Herausforderung","Stark vs. Schwach"],["random","🎲 Zufällig","Komplett zufällig"]].map(([k,l,d])=><button key={k} onClick={()=>setGenMode(k)} style={{padding:"6px 10px",borderRadius:7,border:`2px solid ${genMode===k?C.primary:C.border}`,background:genMode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><span style={{fontWeight:700,fontSize:12,color:genMode===k?C.primary:C.text}}>{l}</span><span style={{fontSize:11,color:C.muted,marginLeft:4}}>{d}</span></button>)}
+            {[["balanced","⚖️ Ausgeglichen","Stärken gleichmäßig verteilt"],["profile","📊 Stärkeverteilung","Pro Team Stärke-Profil wählen"],["mixed","🎨 Durchmischt","Alle Level in jedem Team"],["random","🎲 Zufällig","Komplett zufällig"]].map(([k,l,d])=><button key={k} onClick={()=>setGenMode(k)} style={{padding:"6px 10px",borderRadius:7,border:`2px solid ${genMode===k?C.primary:C.border}`,background:genMode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><span style={{fontWeight:700,fontSize:12,color:genMode===k?C.primary:C.text}}>{l}</span><span style={{fontSize:11,color:C.muted,marginLeft:4}}>{d}</span></button>)}
           </div>
         </div>
       </div>
+      {genMode==="profile"&&<ProfileConfig numTeams={numTeams} profiles={profiles} setProfiles={setProfiles}/>}
       <Btn onClick={generate} style={{width:"100%",justifyContent:"center"}}><Shuffle size={15}/> Teams generieren</Btn>
     </div>}
 
@@ -2711,7 +2756,7 @@ function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose,initi
 
 // ── TURNIER PAGE ──────────────────────────────────────────────────
 function TournamentForm({onSave,onClose}) {
-  const [form,setForm]=useState({name:"",date:todayISO(),matchDuration:8,fields:1,notes:""});
+  const [form,setForm]=useState({name:"",date:todayISO(),matchDuration:8,fields:1,notes:"",defaultTeamSize:4,defaultPause:2});
   // Club setup: {name, count}
   const [clubs,setClubs]=useState([{id:uid(),name:"",count:1}]);
   // Derived teams (generated from clubs)
@@ -2775,6 +2820,8 @@ function TournamentForm({onSave,onClose}) {
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Spieldauer (Min)</label><Stepper value={form.matchDuration} onChange={v=>set("matchDuration",v)} min={3} max={30}/></div>
         <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Felder</label><Stepper value={form.fields} onChange={v=>set("fields",v)} min={1} max={6}/></div>
+        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder/Team</label><Stepper value={form.defaultTeamSize} onChange={v=>set("defaultTeamSize",v)} min={1} max={12}/></div>
+        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Pause zw. Spielen (Min)</label><Stepper value={form.defaultPause} onChange={v=>set("defaultPause",v)} min={0} max={15}/></div>
       </div>
     </div>
 
@@ -2887,11 +2934,27 @@ function TournamentForm({onSave,onClose}) {
   </div>);
 }
 
+function PauseEditor({round,value,defaultVal,isCustom,onChange}) {
+  const setVal=v=>{const u={};u[round]=v;onChange(p=>Object.assign({},p,u));};
+  const reset=()=>{const u={};u[round]=defaultVal;onChange(p=>Object.assign({},p,u));};
+  return(<div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 12px"}}>
+    <div style={{flex:1,height:1,background:"#e2e8f0"}}/>
+    <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+      <span style={{fontSize:11,color:"#64748b"}}>⏸ Pause:</span>
+      <Stepper value={value} onChange={setVal} min={0} max={30}/>
+      <span style={{fontSize:11,color:"#64748b"}}>Min</span>
+      {isCustom&&<button onClick={reset} style={{fontSize:10,padding:"1px 6px",borderRadius:10,border:"1px solid #e2e8f0",background:"white",cursor:"pointer",color:"#64748b",fontFamily:"inherit"}}>Reset</button>}
+    </div>
+    <div style={{flex:1,height:1,background:"#e2e8f0"}}/>
+  </div>);
+}
+
 function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
   const [tab,setTab]=useState("plan");
   const [sc,setSc]=useState(Object.fromEntries(t.matches.map(m=>[m.id,{h:m.homeScore??0,a:m.awayScore??0}])));
   const [startTime,setStartTime]=useState("10:00");
-  const [pauseMin,setPauseMin]=useState(2);
+  const [pauseMin,setPauseMin]=useState(t.defaultPause??2);
+  const [slotPauses,setSlotPauses]=useState({}); // round -> custom pause in minutes
   const gt=id=>t.teams.find(x=>x.id===id);
   const fields=t.fields||1;
   const adjScore=(mId,side,delta)=>setSc(s=>({...s,[mId]:{...s[mId],[side]:Math.max(0,(s[mId]?.[side]||0)+delta)}}));
@@ -2901,7 +2964,7 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
   const buildSchedule=()=>{
     const [h,m]=startTime.split(":").map(Number);
     const startMin=h*60+m;
-    const slotDur=t.matchDuration+pauseMin;
+    // slotDur is used for base calculation; individual rounds can have custom pauses via slotPauses
 
     // Optimal conflict-free scheduler via iterative deepening backtracking.
     // Sorts matches by "hardest to place first" then tries min rounds, then +1 etc.
@@ -2948,9 +3011,18 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
     const fieldUsed={};
     assignment.asgn.forEach((r,i)=>{
       fieldUsed[r]=(fieldUsed[r]||0)+1;
-      slots.push({match:assignment.sorted[i],field:fieldUsed[r],startMin:startMin+r*slotDur,round:r});
+      slots.push({match:assignment.sorted[i],field:fieldUsed[r],round:r});
     });
-    return slots.sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
+    // Compute cumulative startMin with per-round custom pauses
+    const maxRound=slots.reduce((mx,s)=>Math.max(mx,s.round),-1);
+    let cumMin=startMin;
+    const roundStart={};
+    for(let r=0;r<=maxRound;r++){
+      roundStart[r]=cumMin;
+      const pause=slotPauses[r]??pauseMin;
+      cumMin+=t.matchDuration+pause;
+    }
+    return slots.map(s=>({...s,startMin:roundStart[s.round]})).sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
   };
   const fmtTime=m=>{const hh=Math.floor(m/60),mm=m%60;return`${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;};
   const [expandedField,setExpandedField]=useState(null);
@@ -3086,12 +3158,13 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
           const allTeamIds=[...new Set(row.slots.flatMap(sl=>[sl.match.homeId,sl.match.awayId]))];
           const allTeams=allTeamIds.map(gt).filter(Boolean);
           const kidCount=allTeams.reduce((s,tm)=>{
-            const sz=t.teamSizes?.[tm.id]||tm.players?.length||4;
+            const sz=t.teamSizes?.[tm.id]||tm.players?.length||t.defaultTeamSize||4;
             return s+sz;
           },0);
           const activeCoaches=row.slots.map((sl,i)=>coachAssign[sl.field-1]).filter(Boolean);
           const uniqueCoaches=[...new Set(activeCoaches)];
-          return(<div key={ri} style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",background:C.card}}>
+          return(<div key={ri}>
+          <div style={{borderRadius:10,border:`1.5px solid ${C.border}`,overflow:"hidden",background:C.card}}>
             <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:"#f8fafc",borderBottom:`1px solid ${C.border}`,flexWrap:"wrap"}}>
               <span style={{fontWeight:800,fontSize:14,color:C.text,minWidth:44}}>{fmtTime(row.startMin)}</span>
               <span style={{fontSize:12,color:C.muted}}>⏱ {t.matchDuration} Min</span>
@@ -3104,8 +3177,8 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
               {row.slots.map((sl,si)=>{
                 const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
                 const coach=coachAssign[sl.field-1]?coaches.find(c=>c.id===coachAssign[sl.field-1]):null;
-                const hSize=t.teamSizes?.[sl.match.homeId]||h?.players?.length||4;
-                const aSize=t.teamSizes?.[sl.match.awayId]||a?.players?.length||4;
+                const hSize=t.teamSizes?.[sl.match.homeId]||h?.players?.length||t.defaultTeamSize||4;
+                const aSize=t.teamSizes?.[sl.match.awayId]||a?.players?.length||t.defaultTeamSize||4;
                 return(<div key={si} style={{padding:"10px 12px",borderRight:si<row.slots.length-1?`1px solid ${C.border}`:"none"}}>
                   <div style={{fontSize:11,fontWeight:800,color:C.muted,marginBottom:6}}>⚽ Feld {sl.field}{coach?` · 🧑‍🏫 ${coach.name}`:""}</div>
                   <div style={{display:"flex",flexDirection:"column",gap:4}}>
@@ -3117,7 +3190,14 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
                 </div>);
               })}
             </div>
-          </div>);
+          </div>
+          {/* Pause editor between rounds */}
+          {ri<allRows.length-1&&function(){
+            const rnd=row.round;
+            const pval=slotPauses[rnd];
+            return <PauseEditor round={rnd} value={pval??pauseMin} defaultVal={pauseMin} isCustom={pval!==undefined&&pval!==pauseMin} onChange={setSlotPauses}/>;
+          }()}
+        </div>);
         })}
       </div>
     </div>}
