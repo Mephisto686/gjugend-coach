@@ -2220,14 +2220,258 @@ function ShareTeamsModal({teamset,onClose,toast}) {
 }
 
 
+
+// ── TEAMPLANER PAGE ───────────────────────────────────────────────
+const TEAM_COLORS = [
+  {bg:"#fee2e2",border:"#fca5a5",text:"#991b1b",emoji:"🔴"},
+  {bg:"#dbeafe",border:"#93c5fd",text:"#1e40af",emoji:"🔵"},
+  {bg:"#dcfce7",border:"#86efac",text:"#166534",emoji:"🟢"},
+  {bg:"#fef9c3",border:"#fde047",text:"#854d0e",emoji:"🟡"},
+  {bg:"#ffedd5",border:"#fdba74",text:"#9a3412",emoji:"🟠"},
+  {bg:"#f3e8ff",border:"#c4b5fd",text:"#6b21a8",emoji:"🟣"},
+  {bg:"#f1f5f9",border:"#cbd5e1",text:"#334155",emoji:"⚪"},
+  {bg:"#fce7f3",border:"#f9a8d4",text:"#9d174d",emoji:"🩷"},
+];
+
+function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast}) {
+  const [view,setView]=useState("list"); // list | edit | new
+  const [editTs,setEditTs]=useState(null); // teamset being edited
+  const [modal,setModal]=useState(null);
+
+  const activePlayers=players.filter(p=>p.active);
+  const sorted=[...(teamsets||[])].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+
+  const openNew=()=>{
+    setEditTs({id:uid(),date:todayISO(),name:"",teams:[],isNew:true});
+    setView("edit");
+  };
+  const openEdit=(ts)=>{setEditTs(JSON.parse(JSON.stringify(ts)));setView("edit");};
+  const save=(ts)=>{
+    const t={...ts};delete t.isNew;
+    onSaveTeamset(t);
+    toast("Aufstellung gespeichert");
+    setView("list");
+  };
+
+  if(view==="edit"&&editTs) return <TeamEditor ts={editTs} setTs={setEditTs} allPlayers={activePlayers} onSave={save} onCancel={()=>setView("list")}/>;
+
+  return(<div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Teams</h1>
+      <div style={{fontSize:13,color:C.muted,marginTop:2}}>{sorted.length} gespeicherte Aufstellungen</div></div>
+      <Btn onClick={openNew}><Plus size={15}/> Neue Aufstellung</Btn>
+    </div>
+
+    {sorted.length===0&&<div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
+      <div style={{fontSize:40,marginBottom:12}}>👥</div>
+      <div style={{fontWeight:700,marginBottom:6}}>Noch keine Aufstellungen</div>
+      <div style={{fontSize:13,marginBottom:16}}>Erstelle deine erste Team-Aufstellung</div>
+      <Btn onClick={openNew}><Plus size={14}/> Erste Aufstellung</Btn>
+    </div>}
+
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {sorted.map(ts=>{
+        const total=ts.teams.reduce((s,t)=>s+(t.players?.length||0),0);
+        return(<div key={ts.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,padding:"14px 16px"}}>
+          <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:800,fontSize:15,color:C.text}}>{ts.name||"Aufstellung"}</div>
+              <div style={{fontSize:12,color:C.muted,marginTop:2}}>📅 {ts.date?new Date(ts.date+"T12:00").toLocaleDateString("de-DE"):""} · {ts.teams.length} Teams · {total} Kinder</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:8}}>
+                {ts.teams.map((t,i)=>{const col=TEAM_COLORS[i%TEAM_COLORS.length];return(
+                  <span key={t.id} style={{fontSize:11,padding:"2px 8px",borderRadius:20,background:col.bg,border:`1px solid ${col.border}`,color:col.text,fontWeight:700}}>
+                    {col.emoji} {t.name} ({t.players?.length||0})
+                  </span>
+                );})}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:4,flexShrink:0}}>
+              <button onClick={()=>setModal({type:"share",ts})} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}>📤</button>
+              <button onClick={()=>openEdit(ts)} style={{padding:"5px 8px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted}}><Edit2 size={13}/></button>
+              <button onClick={()=>onDeleteTeamset(ts.id)} style={{padding:"5px 8px",borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={13}/></button>
+            </div>
+          </div>
+        </div>);
+      })}
+    </div>
+    {modal?.type==="share"&&<Modal title="Teams teilen" onClose={()=>setModal(null)} wide><ShareTeamsModal teamset={modal.ts} onClose={()=>setModal(null)} toast={toast}/></Modal>}
+  </div>);
+}
+
+function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
+  const [genMode,setGenMode]=useState("balanced");
+  const [numTeams,setNumTeams]=useState(ts.teams.length||Math.max(2,Math.round(allPlayers.length/3)));
+  const [selIds,setSelIds]=useState(()=>{
+    // Pre-select players already in teams, or all active
+    const inTeams=ts.teams.flatMap(t=>t.players?.map(p=>p.id)||[]);
+    return inTeams.length>0?inTeams:allPlayers.map(p=>p.id);
+  });
+  const [dragInfo,setDragInfo]=useState(null); // {playerId, fromTeamId}
+  const [skillDist,setSkillDist]=useState({strong:0,weak:0});
+  const [tab,setTab]=useState(ts.teams.length>0?"manual":"generate"); // generate | manual
+
+  const sel=allPlayers.filter(p=>selIds.includes(p.id));
+
+  // All player IDs currently assigned to any team
+  const assignedIds=ts.teams.flatMap(t=>t.players?.map(p=>p.id)||[]);
+  // Unassigned selected players
+  const unassigned=sel.filter(p=>!assignedIds.includes(p.id));
+
+  const generate=()=>{
+    const teams=buildTeams(sel,numTeams,genMode,skillDist);
+    setTs(prev=>({...prev,teams}));
+    setTab("manual");
+  };
+
+  const movePlayer=(playerId, toTeamId)=>{
+    setTs(prev=>{
+      const teams=prev.teams.map(t=>({...t,players:[...(t.players||[])]}));
+      // Remove from current team
+      teams.forEach(t=>{t.players=t.players.filter(p=>p.id!==playerId);});
+      if(toTeamId==="unassigned") return {...prev,teams};
+      const player=allPlayers.find(p=>p.id===playerId);
+      if(!player) return prev;
+      const target=teams.find(t=>t.id===toTeamId);
+      if(target) target.players.push(player);
+      return {...prev,teams};
+    });
+  };
+
+  const addTeam=()=>{
+    const i=ts.teams.length;
+    setTs(prev=>({...prev,teams:[...prev.teams,{id:uid(),name:`Team ${i+1}`,players:[]}]}));
+  };
+
+  const removeTeam=(teamId)=>{
+    setTs(prev=>{
+      const team=prev.teams.find(t=>t.id===teamId);
+      // Players go back to unassigned (they stay in selIds)
+      return {...prev,teams:prev.teams.filter(t=>t.id!==teamId)};
+    });
+  };
+
+  const renameTeam=(teamId,name)=>{
+    setTs(prev=>({...prev,teams:prev.teams.map(t=>t.id===teamId?{...t,name}:t)}));
+  };
+
+  const tb=(k,l)=><button onClick={()=>setTab(k)} style={{padding:"7px 16px",borderRadius:7,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}</button>;
+
+  return(<div>
+    {/* Header */}
+    <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+      <input value={ts.name} onChange={e=>setTs(p=>({...p,name:e.target.value}))} placeholder="Titel der Aufstellung..." style={{flex:1,minWidth:160,padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:15,fontWeight:700,fontFamily:"inherit",outline:"none"}}/>
+      <input type="date" value={ts.date} onChange={e=>setTs(p=>({...p,date:e.target.value}))} style={{padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,fontFamily:"inherit",outline:"none"}}/>
+    </div>
+
+    {/* Tabs: Generate vs Manual */}
+    <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:16,width:"fit-content"}}>
+      {tb("generate","🎲 Generieren")}
+      {tb("manual","✋ Manuell")}
+    </div>
+
+    {tab==="generate"&&<div>
+      {/* Player selection */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <label style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:.6}}>Spieler auswählen ({sel.length})</label>
+          <div style={{display:"flex",gap:6}}><Btn sm variant="secondary" onClick={()=>setSelIds(allPlayers.map(p=>p.id))}>Alle</Btn><Btn sm variant="secondary" onClick={()=>setSelIds([])}>Keine</Btn></div>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,padding:10,background:"#f8fafc",borderRadius:8,border:`1.5px solid ${C.border}`}}>
+          {allPlayers.map(p=><button key={p.id} onClick={()=>setSelIds(prev=>prev.includes(p.id)?prev.filter(x=>x!==p.id):[...prev,p.id])} style={{padding:"4px 12px",borderRadius:20,border:`2px solid ${selIds.includes(p.id)?STR[p.strength||1].color:C.border}`,background:selIds.includes(p.id)?STR[p.strength||1].light:"white",color:selIds.includes(p.id)?STR[p.strength||1].color:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{STR[p.strength||1].emoji} {p.name}</button>)}
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+        <div>
+          <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Anzahl Teams</label>
+          <Stepper value={numTeams} onChange={setNumTeams} min={2} max={8}/>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>≈ {sel.length?Math.round(sel.length/numTeams):"-"} Spieler/Team</div>
+        </div>
+        <div>
+          <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Modus</label>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            {[["balanced","⚖️ Ausgeglichen","Stärken gleichmäßig"],["mixed","🎨 Durchmischt","Alle Level in jedem Team"],["challenge","⚡ Herausforderung","Stark vs. Schwach"],["random","🎲 Zufällig","Komplett zufällig"]].map(([k,l,d])=><button key={k} onClick={()=>setGenMode(k)} style={{padding:"6px 10px",borderRadius:7,border:`2px solid ${genMode===k?C.primary:C.border}`,background:genMode===k?C.accentL:"white",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}><span style={{fontWeight:700,fontSize:12,color:genMode===k?C.primary:C.text}}>{l}</span><span style={{fontSize:11,color:C.muted,marginLeft:4}}>{d}</span></button>)}
+          </div>
+        </div>
+      </div>
+      <Btn onClick={generate} style={{width:"100%",justifyContent:"center"}}><Shuffle size={15}/> Teams generieren</Btn>
+    </div>}
+
+    {tab==="manual"&&<div>
+      {ts.teams.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:C.muted}}>
+        <div style={{marginBottom:10}}>Noch keine Teams — generiere welche oder füge manuell hinzu</div>
+        <div style={{display:"flex",gap:8,justifyContent:"center"}}><Btn onClick={()=>setTab("generate")} variant="secondary"><Shuffle size={14}/> Generieren</Btn><Btn onClick={addTeam}><Plus size={14}/> Team hinzufügen</Btn></div>
+      </div>}
+
+      {ts.teams.length>0&&<div>
+        {/* Unassigned players pool */}
+        {unassigned.length>0&&<div style={{marginBottom:14,padding:"10px 12px",background:"#fffbeb",borderRadius:10,border:"1.5px solid #fde68a"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#92400e",marginBottom:8}}>⚠️ Nicht zugewiesen ({unassigned.length})</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+            {unassigned.map(p=><div key={p.id} style={{position:"relative"}}>
+              <span style={{fontSize:12,padding:"3px 10px",borderRadius:20,background:"#fef3c7",border:"1.5px solid #fde68a",color:"#92400e",fontWeight:700,display:"block"}}>{STR[p.strength||1].emoji} {p.name}</span>
+              {/* Assign to team buttons */}
+              <div style={{display:"flex",gap:3,marginTop:3,flexWrap:"wrap"}}>
+                {ts.teams.map((t,i)=>{const col=TEAM_COLORS[i%TEAM_COLORS.length];return(
+                  <button key={t.id} onClick={()=>movePlayer(p.id,t.id)} style={{fontSize:10,padding:"2px 6px",borderRadius:12,border:`1px solid ${col.border}`,background:col.bg,color:col.text,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>→ {t.name}</button>
+                );})}
+              </div>
+            </div>)}
+          </div>
+        </div>}
+
+        {/* Team columns */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10,marginBottom:12}}>
+          {ts.teams.map((team,i)=>{
+            const col=TEAM_COLORS[i%TEAM_COLORS.length];
+            return(<div key={team.id} style={{borderRadius:10,border:`2px solid ${col.border}`,overflow:"hidden"}}>
+              <div style={{background:col.bg,padding:"8px 10px",display:"flex",alignItems:"center",gap:6}}>
+                <span>{col.emoji}</span>
+                <input value={team.name} onChange={e=>renameTeam(team.id,e.target.value)} style={{flex:1,border:"none",background:"transparent",fontWeight:800,fontSize:13,color:col.text,fontFamily:"inherit",outline:"none",minWidth:0}}/>
+                <button onClick={()=>removeTeam(team.id)} style={{border:"none",background:"transparent",cursor:"pointer",color:col.text,opacity:.6,padding:0,lineHeight:1}}>✕</button>
+              </div>
+              <div style={{padding:"6px 8px",minHeight:60}}>
+                {(team.players||[]).map(p=><div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${col.border}33`}}>
+                  <span style={{fontSize:12,fontWeight:600,color:C.text}}>{STR[p.strength||1].emoji} {p.name}</span>
+                  {/* Move to other team or unassign */}
+                  <div style={{display:"flex",gap:2}}>
+                    {ts.teams.filter(t=>t.id!==team.id).map((t,j)=>{const c2=TEAM_COLORS[ts.teams.indexOf(t)%TEAM_COLORS.length];return(
+                      <button key={t.id} title={`→ ${t.name}`} onClick={()=>movePlayer(p.id,t.id)} style={{width:16,height:16,borderRadius:"50%",border:`1.5px solid ${c2.border}`,background:c2.bg,cursor:"pointer",fontSize:8,display:"flex",alignItems:"center",justifyContent:"center",color:c2.text,fontWeight:900}}>→</button>
+                    );})}
+                    <button title="Entfernen" onClick={()=>movePlayer(p.id,"unassigned")} style={{width:16,height:16,borderRadius:"50%",border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",color:"#ef4444"}}>✕</button>
+                  </div>
+                </div>)}
+                {/* Add unassigned player to this team */}
+                {unassigned.length===0&&(team.players||[]).length===0&&<div style={{fontSize:11,color:C.muted,textAlign:"center",padding:"8px 0"}}>Leer</div>}
+              </div>
+              {/* Quick-add from unassigned */}
+              {unassigned.length>0&&<div style={{padding:"4px 8px",borderTop:`1px solid ${col.border}33`}}>
+                <select onChange={e=>{if(e.target.value){movePlayer(e.target.value,team.id);e.target.value="";}}} style={{width:"100%",fontSize:11,padding:"3px 4px",border:`1px solid ${col.border}`,borderRadius:6,background:"white",fontFamily:"inherit",color:C.text,cursor:"pointer"}}>
+                  <option value="">+ Spieler hinzufügen</option>
+                  {unassigned.map(p=><option key={p.id} value={p.id}>{STR[p.strength||1].emoji} {p.name}</option>)}
+                </select>
+              </div>}
+            </div>);
+          })}
+        </div>
+        <Btn variant="secondary" onClick={addTeam} style={{width:"100%",justifyContent:"center"}}><Plus size={14}/> Team hinzufügen</Btn>
+      </div>}
+    </div>}
+
+    {/* Actions */}
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:20,paddingTop:14,borderTop:`1px solid ${C.border}`,flexWrap:"wrap"}}>
+      <Btn variant="secondary" onClick={onCancel}>Abbrechen</Btn>
+      {ts.teams.length>0&&<Btn onClick={()=>onSave({...ts,name:ts.name||`Teams ${new Date(ts.date+"T12:00").toLocaleDateString("de-DE")}`})}><CheckSquare size={14}/> Speichern</Btn>}
+    </div>
+  </div>);
+}
+
 // ── TRAINING PAGE ─────────────────────────────────────────────────
-function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise,pendingSetup,onClearPendingSetup,teamsets,onSaveTeamset,onDeleteTeamset}) {
+function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise,pendingSetup,onClearPendingSetup}) {
   const [tab,setTab]=useState("history");
   const [modal,setModal]=useState(()=>pendingSetup?{type:"setup",setup:pendingSetup}:null);
   useEffect(()=>{if(pendingSetup){setModal({type:"setup",setup:pendingSetup});onClearPendingSetup?.();}},[]);
   const sorted=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date));
   const gP=id=>players.find(p=>p.id===id),gC=id=>coaches.find(c=>c.id===id),gE=id=>exercises.find(e=>e.id===id);
-  const tb=(k,l)=><button onClick={()=>setTab(k)} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}</button>;
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
       <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Training</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{sessions.length} Einheiten</div></div>
@@ -2236,7 +2480,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
         <Btn onClick={()=>setModal({type:"setup"})}><CalendarDays size={16}/> Training planen</Btn>
       </div>
     </div>
-    <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content"}}>{tb("history","Verlauf")}{tb("teams","Teambildung")}</div>
+
     {tab==="history"&&(sorted.length===0?<Empty icon="📅" title="Noch kein Training" onAdd={()=>setModal({type:"session",data:null})} addLabel="Training planen"/>:
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {sorted.map(s=>{
@@ -2267,55 +2511,8 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
       </div>)}
     {tab==="teams"&&<div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <div><h2 style={{margin:0,fontSize:16,fontWeight:800,color:C.text}}>Teams</h2><div style={{fontSize:12,color:C.muted,marginTop:2}}>{(teamsets||[]).length} gespeicherte Aufstellungen</div></div>
-        <Btn onClick={()=>setModal({type:"tb",data:{session:null,players:players.filter(p=>p.active)}})}><Shuffle size={14}/> Neue Teams</Btn>
-      </div>
-      {(teamsets||[]).length===0?<div style={{textAlign:"center",padding:"40px 0",color:C.muted}}>
-        <div style={{fontSize:40,marginBottom:12}}>👥</div>
-        <div style={{fontSize:15,fontWeight:700,marginBottom:6}}>Noch keine Teams gespeichert</div>
-        <div style={{fontSize:13}}>Erstelle Teams und speichere sie für später.</div>
-      </div>:
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {[...(teamsets||[])].sort((a,b)=>b.date?.localeCompare(a.date||"")).map(ts=>(
-          <div key={ts.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderBottom:`1px solid ${C.border}`}}>
-              <div style={{flex:1}}><div style={{fontWeight:800,fontSize:15,color:C.text}}>{ts.name||`Teams vom ${new Date(ts.date).toLocaleDateString("de-DE")}`}</div>
-                <div style={{fontSize:12,color:C.muted}}>{new Date(ts.date).toLocaleDateString("de-DE")} · {ts.teams.length} Teams · {ts.teams.reduce((s,t)=>s+(t.players?.length||0),0)} Kinder</div>
-              </div>
-              <button onClick={()=>setModal({type:"shareTeams",teamset:ts})} style={{padding:"5px 10px",borderRadius:7,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontSize:12,color:C.muted,fontFamily:"inherit"}}>📤 Teilen</button>
-              <button onClick={()=>onDeleteTeamset(ts.id)} style={{padding:5,borderRadius:7,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={14}/></button>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:0}}>
-              {ts.teams.map((t,i)=>(
-                <div key={t.id||i} style={{padding:"10px 14px",borderRight:i<ts.teams.length-1?`1px solid ${C.border}`:"none"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:TCOLORS[i%TCOLORS.length],flexShrink:0}}/>
-                    <span style={{fontWeight:800,fontSize:13,color:C.text}}>{t.name}</span>
-                  </div>
-                  {t.players?.map(p=><div key={p.id||p.name} style={{fontSize:12,color:C.muted,padding:"1px 0"}}>{p.name}</div>)}
-                  <div style={{fontSize:11,color:C.muted,marginTop:4}}>Ø {t.players?.length?(t.players.reduce((s,p)=>s+(p.strength||2),0)/t.players.length).toFixed(1):"–"}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>}
-    </div>}
-    {modal?.type==="notfall"&&<Modal title="🚨 Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="setup"&&<Modal title={modal.replaceId?"Training neu planen":"Training planen"} onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} initialSetup={modal.setup} onClose={()=>setModal(null)} onPlanManual={setup=>setModal({type:"manual",setup,replaceId:modal.replaceId})} onPlanKI={setup=>setModal({type:"ai",setup,replaceId:modal.replaceId})}/></Modal>}
-    {modal?.type==="manual"&&<Modal title={modal.replaceId?"📋 Neu planen":"📋 Manuell planen"} onClose={()=>setModal(null)} wide><ManualTrainingPlanner exercises={exercises} players={players} coachesList={coaches} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveSession={s=>{onSaveSession(s);setModal(null);}} apiKey={apiKey} toast={toast}/></Modal>}
-    {modal?.type==="ai"&&<Modal title={modal.replaceId?"🤖 Neu planen (KI)":"🤖 KI-Trainingsplan"} onClose={()=>setModal(null)} wide><AITrainingModal players={players} exercises={exercises} apiKey={apiKey} setup={modal.setup} replaceId={modal.replaceId} onClose={()=>setModal(null)} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);toast("Training gespeichert ✓");}}/></Modal>}
-    {modal?.type==="shareTeams"&&modal.teamset&&<Modal title="Teams teilen" onClose={()=>setModal(null)} wide><ShareTeamsModal teamset={modal.teamset} onClose={()=>setModal(null)} toast={toast}/></Modal>}
     {modal?.type==="session"&&<Modal title={modal.data?"Training bearbeiten":"Neues Training"} onClose={()=>setModal(null)} wide><SessionForm session={modal.data} players={players} coaches={coaches} exercises={exercises} onSave={s=>{onSaveSession(s);setModal(null);}} onClose={()=>setModal(null)}/></Modal>}
-    {modal?.type==="tb"&&<Modal title="Teambildung" onClose={()=>setModal(null)} wide><TeamBuilderModal availablePlayers={modal.data.players} onSaveTeams={(teams,goTraining)=>{
-        if(modal.data.session) onSaveSession({...modal.data.session,teams});
-        if(goTraining){
-          const ids=(modal.data.players||players.filter(p=>p.active)).map(p=>p.id);
-          const setup={playerIds:ids,coachIds:[],kids:ids.length,coachCount:1,date:todayISO(),location:"outdoor",focus:""};
-          setPendingSetup(setup);setPage?.("training");
-        }
-        setModal(null);
-      }} onSaveTeamset={onSaveTeamset} onClose={()=>setModal(null)}/></Modal>}
+
     {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession} onPrint={()=>printSession(modal.data,exercises,toast)} onReplan={()=>{
       const s=modal.data;
       setModal({type:"manual",replaceId:s.id,setup:{kids:Number(s.participantCount)||players.filter(p=>p.active).length,coachCount:s.coachIds?.length||1,duration:s.duration||60,location:s.location==="Halle"?"indoor":"outdoor",date:s.date,playerIds:s.playerIds||[],coachIds:s.coachIds||[],focus:"",planData:s.planData||null}});
@@ -2934,7 +3131,7 @@ function BirthdayBanner({players}) {
 
 
 function Nav({page,setPage,counts}) {
-  const items=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
+  const items=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"teamplaner",icon:Shuffle,label:"Teams",count:counts.teamsets},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
   return(<>
     <style>{`.gn{position:fixed;left:0;top:0;bottom:0;width:200px;background:${C.nav};display:flex;flex-direction:column;z-index:100;padding:0 12px 20px}.gm{display:flex;margin-left:200px;padding:28px;max-width:1100px}.gb{display:none;position:fixed;bottom:0;left:0;right:0;background:${C.nav};z-index:100;border-top:1px solid rgba(255,255,255,.1)}@media(max-width:640px){.gn{display:none}.gb{display:flex}.gm{margin-left:0!important;padding:16px;padding-bottom:80px}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     <div className="gn">
@@ -3103,11 +3300,12 @@ export default function App() {
   return(<div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:C.bg,minHeight:"100vh"}}>
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
-    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length}}/>
+    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length}}/>
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{const i=exercises.find(e=>e.id===id);setExercises(prev=>prev.filter(e=>e.id!==id));showUndo("Übung",i,()=>setExercises(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast}/>}
       {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={savePl} onDeletePlayer={id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}} onSaveCoach={saveCo} onDeleteCoach={id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}}/>}
-      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>setTeamsets(prev=>prev.filter(t=>t.id!==id))}/>}
+      {page==="teamplaner"&&<TeamplanerPage players={players} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>{const i=teamsets.find(t=>t.id===id);setTeamsets(prev=>prev.filter(t=>t.id!==id));showUndo("Team-Aufstellung",i,()=>setTeamsets(prev=>[i,...prev]));}} toast={toast}/>}
+      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} />}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
       {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}} toast={toast}/>}
       {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup}/>}
