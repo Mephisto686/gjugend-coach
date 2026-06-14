@@ -3207,7 +3207,7 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
             </div>
           </div>
           {/* Pause editor between rounds */}
-          {ri<allRowsLen-1&&function(){
+          {ri<allRows.length-1&&function(){
             const rnd=row.round;
             const pval=slotPauses[rnd];
             return <PauseEditor round={rnd} value={pval??pauseMin} defaultVal={pauseMin} isCustom={pval!==undefined&&pval!==pauseMin} onChange={setSlotPauses}/>;
