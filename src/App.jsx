@@ -3032,17 +3032,6 @@ export default function App() {
   const [kassenbuch, setKassenbuch, kr]=useCloudStorage("kassenbuch", [], user);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
   const [lastExportAt,setLastExportAt]=useStorage("lastExportAt","");
-  const backupDaysSince=lastExportAt?Math.floor((Date.now()-new Date(lastExportAt).getTime())/86400000):null;
-  const showBackupBanner=backupDaysSince===null||backupDaysSince>=14;
-  const doFullBackup=async()=>{await dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast);setLastExportAt(new Date().toISOString());};
-  const [undoBuf,setUndoBuf]=useState(null);
-  function showUndo(label,item,restoreFn){
-    if(undoBuf?.t)clearTimeout(undoBuf.t);
-    const t=setTimeout(()=>setUndoBuf(null),5000);
-    setUndoBuf({label:`${label} gelöscht`,t,
-      restore:()=>{clearTimeout(t);restoreFn();setUndoBuf(null);toast(`${label} wiederhergestellt`,"ok");}
-    });
-  }
   const [customCats, setCustomCats    ]=useStorage("customCats", []);
   const [teamsets,   setTeamsets        ]=useStorage("teamsets",   []);
   const saveTSets=x=>setTeamsets(upsert(x));
@@ -3054,6 +3043,15 @@ export default function App() {
     Object.assign(CATS,merged);
   },[customCats]);
   const {toast,Toasts}=useToast();
+  const doFullBackup=async()=>{await dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast);setLastExportAt(new Date().toISOString());};
+  const [undoBuf,setUndoBuf]=useState(null);
+  function showUndo(label,item,restoreFn){
+    if(undoBuf?.t)clearTimeout(undoBuf.t);
+    const t=setTimeout(()=>setUndoBuf(null),5000);
+    setUndoBuf({label:`${label} gelöscht`,t,
+      restore:()=>{clearTimeout(t);restoreFn();setUndoBuf(null);toast(`${label} wiederhergestellt`,"ok");}
+    });
+  }
   // Functional update helpers - prevent stale closure bugs
   const mergeArr=(inc)=>prev=>{ const m=Object.fromEntries(prev.map(e=>[e.id,e]));inc?.forEach(i=>{if(!m[i.id])m[i.id]=i;});return Object.values(m); };
   const upsert=(x)=>prev=>prev.find(e=>e.id===x.id)?prev.map(e=>e.id===x.id?x:e):[...prev,x];
