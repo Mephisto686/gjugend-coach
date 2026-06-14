@@ -941,23 +941,30 @@ ${PDF_SCRIPT}</body></html>`;
               {catExs.map(ex=>{
                 const isSel=selIds.includes(ex.id);
                 return(<div key={ex.id} onClick={()=>selMode?toggleSel(ex.id):setModal({type:"detail",ex})}
-                  style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",cursor:"pointer",background:isSel?C.accentL:"white",borderBottom:`1px solid #f1f5f9`}}>
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",cursor:"pointer",background:isSel?C.accentL:"white",borderBottom:`1px solid #f1f5f9`,transition:"background .1s"}}>
+                  {/* Color bar left */}
+                  <div style={{width:4,height:40,borderRadius:3,background:catInfo.color,flexShrink:0,opacity:.7}}/>
+                  {/* Thumbnail or emoji */}
                   {ex.imageUrl
-                    ?<img src={ex.imageUrl} alt="" style={{width:36,height:36,objectFit:"cover",borderRadius:5,flexShrink:0}}/>
-                    :<div style={{width:36,height:36,borderRadius:5,background:catInfo.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{catInfo.emoji}</div>}
-                  {selMode&&<div style={{color:isSel?C.primary:C.muted,flexShrink:0}}>{isSel?<CheckSquare size={15}/>:<Square size={15}/>}</div>}
+                    ?<img src={ex.imageUrl} alt="" style={{width:44,height:44,objectFit:"cover",borderRadius:8,flexShrink:0}}/>
+                    :<div style={{width:44,height:44,borderRadius:8,background:catInfo.bg,border:`1.5px solid ${catInfo.color}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{catInfo.emoji}</div>}
+                  {selMode&&<div style={{color:isSel?C.primary:C.muted,flexShrink:0}}>{isSel?<CheckSquare size={16}/>:<Square size={16}/>}</div>}
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:700,fontSize:14,color:C.text,display:"flex",alignItems:"center",gap:5}}>
-                      {ex.title}
-                      {ex.done&&<span style={{fontSize:10,padding:"1px 5px",borderRadius:10,background:"#dcfce7",color:"#16a34a",fontWeight:700}}>✅</span>}
+                    <div style={{fontWeight:700,fontSize:14,color:C.text,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ex.title}</span>
+                      {ex.done&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:10,background:"#dcfce7",color:"#16a34a",fontWeight:700,flexShrink:0}}>✅</span>}
                     </div>
-                    <div style={{fontSize:11,color:C.muted,display:"flex",gap:6,marginTop:1}}>
-                      <span>⏱ {ex.duration}m</span>
-                      {ex.rating>0&&<span style={{color:"#f59e0b"}}>{"★".repeat(ex.rating)}</span>}
-                      {ex.material?.length>0&&<span>📦 {ex.material.length}</span>}
+                    <div style={{fontSize:12,color:C.muted,display:"flex",gap:8,marginTop:3,alignItems:"center"}}>
+                      <span>⏱ {ex.duration} Min</span>
+                      <span>👥 {ex.minPlayers||4}–{ex.maxPlayers||12}</span>
+                      {ex.rating>0&&<span style={{color:"#f59e0b",letterSpacing:1}}>{"★".repeat(ex.rating)}</span>}
+                      {ex.material?.length>0&&<span style={{color:C.muted}}>📦 {ex.material.length}</span>}
                     </div>
+                    {ex.tags?.length>0&&<div style={{display:"flex",gap:4,marginTop:4,flexWrap:"wrap"}}>
+                      {ex.tags.slice(0,3).map(t=><span key={t} style={{fontSize:10,padding:"1px 7px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontWeight:600}}>{t}</span>)}
+                    </div>}
                   </div>
-                  <span style={{color:C.muted,fontSize:16}}>›</span>
+                  <span style={{color:C.muted,fontSize:18,flexShrink:0}}>›</span>
                 </div>);
               })}
             </div>
@@ -965,10 +972,13 @@ ${PDF_SCRIPT}</body></html>`;
               {catExs.map(ex=>{
                 const isSel=selIds.includes(ex.id);
                 return(<div key={ex.id} onClick={()=>selMode?toggleSel(ex.id):setModal({type:"detail",ex})}
-                  style={{background:C.card,borderRadius:12,border:`2px solid ${selMode&&isSel?C.primary:C.border}`,padding:"14px 16px",cursor:"pointer",display:"flex",flexDirection:"column",gap:8,transition:"box-shadow .15s",position:"relative",opacity:selMode&&!isSel?.7:1}}
-                  onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.1)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-                  {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
-                  {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",maxHeight:120,objectFit:"cover",borderRadius:8}}/>}
+                  style={{background:C.card,borderRadius:12,border:`2px solid ${selMode&&isSel?C.primary:catInfo.color+"33"}`,overflow:"hidden",cursor:"pointer",display:"flex",flexDirection:"column",transition:"box-shadow .15s, transform .1s",position:"relative",opacity:selMode&&!isSel?.6:1}}
+                  onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 4px 20px rgba(0,0,0,.12)";e.currentTarget.style.transform="translateY(-1px)";}} onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";e.currentTarget.style.transform="none";}}>
+                  {/* Card header strip */}
+                  <div style={{height:4,background:catInfo.color,width:"100%"}}/>
+                  {selMode&&<div style={{position:"absolute",top:10,right:10,color:isSel?C.primary:C.muted,background:"white",borderRadius:5,padding:1}}>{isSel?<CheckSquare size={18}/>:<Square size={18}/>}</div>}
+                  {ex.imageUrl&&<img src={ex.imageUrl} alt="" style={{width:"100%",height:110,objectFit:"cover"}}/>}
+                  <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:7,flex:1}}>
                   <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
                     <CatBadge cat={ex.category} small/>
                     <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -978,7 +988,8 @@ ${PDF_SCRIPT}</body></html>`;
                   </div>
                   <div style={{fontWeight:800,fontSize:15,color:C.text}}>{ex.title}</div>
                   <div style={{display:"flex",gap:10,color:C.muted,fontSize:12,fontWeight:600,flexWrap:"wrap"}}><span>⏱ {ex.duration} Min</span><span>👥 {ex.minPlayers}–{ex.maxPlayers}</span>{ex.material?.length>0&&<span>📦 {ex.material.length}x</span>}</div>
-                  {ex.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.tags.slice(0,3).map(t=><span key={t} style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11,fontWeight:600}}>{t}</span>)}{ex.tags.length>3&&<span style={{padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:11}}>+{ex.tags.length-3}</span>}</div>}
+                  {ex.tags?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:4}}>{ex.tags.slice(0,3).map(t=><span key={t} style={{padding:"2px 7px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:10,fontWeight:600}}>{t}</span>)}{ex.tags.length>3&&<span style={{padding:"2px 7px",borderRadius:20,background:"#f1f5f9",color:C.muted,fontSize:10}}>+{ex.tags.length-3}</span>}</div>}
+                  </div>
                 </div>);
               })}
             </div>
@@ -3366,16 +3377,17 @@ export default function App() {
   const saveTo=x=>{ setTournaments(upsert(x)); };
   const saveKa=x=>{ setKassenbuch(upsert(x)); };
 
+  const normExCats=exs=>(exs||[]).map(e=>({...e,category:normCat(e.category)||"uebung"}));
   const doImport=(data,mode)=>{
     if(mode==='merge'){
-      if(data.exercises)setExercises(mergeArr(data.exercises));
+      if(data.exercises)setExercises(mergeArr(normExCats(data.exercises)));
       if(data.players)setPlayers(mergeArr(data.players));
       if(data.coaches)setCoaches(mergeArr(data.coaches));
       if(data.sessions)setSessions(mergeArr(data.sessions));
       if(data.tournaments)setTournaments(mergeArr(data.tournaments));
       if(data.kassenbuch)setKassenbuch(mergeArr(data.kassenbuch));
     } else if(mode==='replace'){
-      if(data.exercises)setExercises(data.exercises);
+      if(data.exercises)setExercises(normExCats(data.exercises));
       if(data.players)setPlayers(data.players);
       if(data.coaches)setCoaches(data.coaches);
       if(data.sessions)setSessions(data.sessions);
