@@ -4031,6 +4031,10 @@ function BackupBanner({lastExportAt,onBackup}) {
 
 export default function App() {
   const [page,setPage]=useState(()=>sessionStorage.getItem("gjPage")||"library");
+  useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
+  const [pendingSetup,setPendingSetup]=useState(null);
+  const { user, login, loginEmail, registerEmail, resetPassword, logout, onlineUsers } = useFirebaseAuth();
+  const { role, allUsers, setUserRole } = useRole(user);
   // Redirect if current page not allowed for role
   useEffect(()=>{
     if(role&&!can(role,page)){
@@ -4038,10 +4042,6 @@ export default function App() {
       if(allowed) setPage(allowed);
     }
   },[role,page]);
-  useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
-  const [pendingSetup,setPendingSetup]=useState(null);
-  const { user, login, loginEmail, registerEmail, resetPassword, logout, onlineUsers } = useFirebaseAuth();
-  const { role, allUsers, setUserRole } = useRole(user);
   const [exercises,  setExercises,  er]=useCloudStorage("exercises",  [], user);
   const [players,    setPlayers,    pr]=useCloudStorage("players",    [], user);
   const [coaches,    setCoaches,    cr]=useCloudStorage("coaches",    [], user);
