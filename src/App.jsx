@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Dexie from "dexie";
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile, sendPasswordResetEmail } from "firebase/auth";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, deleteDoc, collection, addDoc, query, orderBy, limit, getDocs, serverTimestamp } from "firebase/firestore";
 import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, Download, Upload, Shuffle, Filter, Clock, Trophy, Bot, RefreshCw, CheckSquare, Square, Dices, ListChecks, Wallet, Phone, MapPin, AlertTriangle, ShieldCheck } from "lucide-react";
 
@@ -74,13 +74,25 @@ function useRole(user) {
   const [allUsers,setAllUsers]=useState([]);
 
   useEffect(()=>{
-    if(!fbDb||!user){setRole(user===null?"pending":null);return;}
+    if(!fbDb||!user){
+      // If no Firebase, give full access (local mode)
+      setRole(user===null?null:!fbDb?"admin":"pending");
+      return;
+    }
     // Listen to own role doc
+    // Track whether we've connected to Firestore at all
+    let connected=false;
+    // Fallback: if Firestore never responds (offline/rules error), grant admin only if no connection
+    const fallback=setTimeout(()=>{
+      if(!connected) setRole(r=>r===null?"admin":r); // truly offline = admin fallback
+    },8000);
     const unsub=onSnapshot(doc(fbDb,"roles",user.uid),async snap=>{
+      connected=true;
+      clearTimeout(fallback);
       if(snap.exists()){
         setRole(snap.data().role||"pending");
       } else {
-        // First user ever = admin, otherwise pending
+        // New user: first ever = admin, otherwise pending
         try {
           const rolesSnap=await getDocs(collection(fbDb,"roles"));
           const newRole=rolesSnap.empty?"admin":"pending";
@@ -90,10 +102,15 @@ function useRole(user) {
             createdAt:new Date().toISOString()
           });
           setRole(newRole);
-        } catch(e){setRole("pending");}
+        } catch(e){clearTimeout(fallback);setRole("pending");} // if write fails, pending
       }
-    },()=>setRole("pending"));
-    return unsub;
+    },e=>{
+      // Firestore error (e.g. permission denied before rules update)
+      clearTimeout(fallback);
+      if(!connected) setRole("admin"); // never connected = offline fallback
+      else setRole("pending"); // connected but error = pending for safety
+    });
+    return ()=>{clearTimeout(fallback);unsub();};
   },[user]);
 
   // Admin: listen to all users
@@ -3822,8 +3839,23 @@ function useFirebaseAuth() {
   }, []);
 
   const login  = () => signInWithPopup(fbAuth, new GoogleAuthProvider()).catch(e=>console.warn("login",e));
+  const loginEmail = async(email,password) => {
+    try { await signInWithEmailAndPassword(fbAuth,email,password); return null; }
+    catch(e) { return e.code; }
+  };
+  const registerEmail = async(email,password,name) => {
+    try {
+      const cred=await createUserWithEmailAndPassword(fbAuth,email,password);
+      if(name) await updateProfile(cred.user,{displayName:name});
+      return null;
+    } catch(e) { return e.code; }
+  };
+  const resetPassword = async(email) => {
+    try { await sendPasswordResetEmail(fbAuth,email); return null; }
+    catch(e) { return e.code; }
+  };
   const logout = () => { if(user) setPresence(user, false); signOut(fbAuth); };
-  return { user, login, logout, onlineUsers };
+  return { user, login, loginEmail, registerEmail, resetPassword, logout, onlineUsers };
 }
 
 // ── FIREBASE SYNC HOOK ────────────────────────────────────────────
@@ -3888,6 +3920,97 @@ function PresenceBadge({onlineUsers, currentUser}) {
   </div>);
 }
 
+// ── AUTH SCREEN ───────────────────────────────────────────────────
+function AuthScreen({onGoogle,onEmail,onRegister,onReset}) {
+  const [mode,setMode]=useState("login"); // login | register | reset
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [name,setName]=useState("");
+  const [err,setErr]=useState("");
+  const [info,setInfo]=useState("");
+  const [loading,setLoading]=useState(false);
+
+  const ERROR_MSGS={
+    "auth/user-not-found":"Kein Konto mit dieser E-Mail gefunden",
+    "auth/wrong-password":"Falsches Passwort",
+    "auth/invalid-credential":"E-Mail oder Passwort falsch",
+    "auth/email-already-in-use":"Diese E-Mail ist bereits registriert",
+    "auth/weak-password":"Passwort muss mindestens 6 Zeichen haben",
+    "auth/invalid-email":"Ungültige E-Mail-Adresse",
+    "auth/too-many-requests":"Zu viele Versuche. Bitte kurz warten.",
+  };
+
+  const handle=async()=>{
+    setErr("");setInfo("");setLoading(true);
+    let errCode=null;
+    if(mode==="login") errCode=await onEmail(email,password);
+    else if(mode==="register") errCode=await onRegister(email,password,name);
+    else if(mode==="reset"){
+      errCode=await onReset(email);
+      if(!errCode) setInfo("E-Mail zum Zurücksetzen wurde gesendet!");
+    }
+    if(errCode) setErr(ERROR_MSGS[errCode]||`Fehler: ${errCode}`);
+    setLoading(false);
+  };
+
+  const inp=(val,set,type,ph,auto)=>(
+    <input value={val} onChange={e=>set(e.target.value)} type={type} placeholder={ph}
+      autoComplete={auto} onKeyDown={e=>e.key==="Enter"&&handle()}
+      style={{width:"100%",padding:"12px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:15,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
+  );
+
+  return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,padding:24}}>
+    <div style={{width:"100%",maxWidth:340,display:"flex",flexDirection:"column",gap:0}}>
+      {/* Header */}
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{fontSize:52,marginBottom:10}}>⚽</div>
+        <div style={{fontWeight:900,fontSize:24,color:C.text}}>G-Jugend Coach</div>
+        <div style={{fontSize:13,color:C.muted,marginTop:4}}>SC Sternschanze</div>
+      </div>
+
+      {/* Card */}
+      <div style={{background:"white",borderRadius:16,padding:"24px 20px",boxShadow:"0 4px 24px rgba(0,0,0,.08)",display:"flex",flexDirection:"column",gap:12}}>
+        {/* Mode tabs */}
+        <div style={{display:"flex",gap:0,background:"#f1f5f9",borderRadius:10,padding:3,marginBottom:4}}>
+          {[["login","Anmelden"],["register","Registrieren"]].map(([k,l])=>(
+            <button key={k} onClick={()=>{setMode(k);setErr("");setInfo("");}} style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",background:mode===k?"white":"transparent",color:mode===k?C.text:C.muted,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",boxShadow:mode===k?"0 1px 4px rgba(0,0,0,.1)":"none"}}>{l}</button>
+          ))}
+        </div>
+
+        {mode==="register"&&inp(name,setName,"text","Name (Anzeigename)","name")}
+        {inp(email,setEmail,"email","E-Mail-Adresse","email")}
+        {mode!=="reset"&&inp(password,setPassword,"password","Passwort","current-password")}
+
+        {err&&<div style={{fontSize:12,color:"#ef4444",padding:"6px 10px",background:"#fff5f5",borderRadius:8,border:"1px solid #fca5a5"}}>{err}</div>}
+        {info&&<div style={{fontSize:12,color:"#16a34a",padding:"6px 10px",background:"#f0fdf4",borderRadius:8,border:"1px solid #bbf7d0"}}>{info}</div>}
+
+        <button onClick={handle} disabled={loading||!email||(mode!=="reset"&&!password)}
+          style={{padding:"12px 0",borderRadius:10,border:"none",background:loading?C.muted:C.primary,color:"white",fontWeight:800,fontSize:15,cursor:loading?"default":"pointer",fontFamily:"inherit",width:"100%"}}>
+          {loading?"...":{login:"Anmelden",register:"Registrieren",reset:"Link senden"}[mode]}
+        </button>
+
+        {mode==="login"&&<button onClick={()=>{setMode("reset");setErr("");setInfo("");}} style={{background:"none",border:"none",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>Passwort vergessen?</button>}
+        {mode==="reset"&&<button onClick={()=>setMode("login")} style={{background:"none",border:"none",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}>← Zurück zur Anmeldung</button>}
+
+        {/* Divider */}
+        <div style={{display:"flex",alignItems:"center",gap:8,margin:"4px 0"}}>
+          <div style={{flex:1,height:1,background:C.border}}/>
+          <span style={{fontSize:12,color:C.muted}}>oder</span>
+          <div style={{flex:1,height:1,background:C.border}}/>
+        </div>
+
+        {/* Google */}
+        <button onClick={onGoogle} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,padding:"11px 0",borderRadius:10,border:`1.5px solid ${C.border}`,background:"white",cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14,width:"100%"}}>
+          <img src="https://www.google.com/favicon.ico" width={17} height={17} alt="G"/>
+          Mit Google anmelden
+        </button>
+      </div>
+
+      <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:16}}>Nur autorisierte Mitglieder haben Zugriff</div>
+    </div>
+  </div>);
+}
+
 // ── BACKUP BANNER ─────────────────────────────────────────────────
 function BackupBanner({lastExportAt,onBackup}) {
   const [dismissed,setDismissed]=useState(false);
@@ -3917,7 +4040,7 @@ export default function App() {
   },[role,page]);
   useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
   const [pendingSetup,setPendingSetup]=useState(null);
-  const { user, login, logout, onlineUsers } = useFirebaseAuth();
+  const { user, login, loginEmail, registerEmail, resetPassword, logout, onlineUsers } = useFirebaseAuth();
   const { role, allUsers, setUserRole } = useRole(user);
   const [exercises,  setExercises,  er]=useCloudStorage("exercises",  [], user);
   const [players,    setPlayers,    pr]=useCloudStorage("players",    [], user);
@@ -3984,7 +4107,7 @@ export default function App() {
   // Auth still loading
   if(user===undefined||!er||!pr||!cr||!sr||!tr||!kr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
   // Role still loading
-  if(user&&role===null) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⏳</div><div style={{fontWeight:700}}>Lade Berechtigungen...</div></div></div>;
+  if(user&&role===null) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⏳</div><div style={{fontWeight:700}}>Lade Berechtigungen...</div><div style={{fontSize:12,marginTop:8}}>Falls dies länger dauert, bitte neu laden</div></div></div>;
   // Pending - waiting for admin approval
   if(user&&role==="pending") return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,flexDirection:"column",gap:16,padding:24}}>
     <div style={{fontSize:56}}>⏳</div>
@@ -3994,16 +4117,7 @@ export default function App() {
     <button onClick={logout} style={{padding:"8px 20px",borderRadius:10,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14}}>Abmelden</button>
   </div>);
   // Not logged in - show login screen
-  if(!user) return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,flexDirection:"column",gap:20,padding:24}}>
-    <div style={{fontSize:56}}>⚽</div>
-    <div style={{fontWeight:900,fontSize:24,color:C.text,textAlign:"center"}}>G-Jugend Coach</div>
-    <div style={{color:C.muted,fontSize:14,textAlign:"center",maxWidth:280}}>Melde dich mit deinem Google-Account an, um auf die gemeinsamen Teamdaten zuzugreifen.</div>
-    <button onClick={login} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 24px",borderRadius:12,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:15,boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>
-      <img src="https://www.google.com/favicon.ico" width={18} height={18} alt="G"/>
-      Mit Google anmelden
-    </button>
-    <div style={{fontSize:11,color:C.muted,textAlign:"center",maxWidth:260}}>SC Sternschanze · Nur autorisierte Trainer haben Zugriff</div>
-  </div>);
+  if(!user) return <AuthScreen onGoogle={login} onEmail={loginEmail} onRegister={registerEmail} onReset={resetPassword}/>;
   return(<div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:C.bg,minHeight:"100vh"}}>
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
