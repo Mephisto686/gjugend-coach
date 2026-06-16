@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import Dexie from "dexie";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile, sendPasswordResetEmail } from "firebase/auth";
@@ -204,7 +204,7 @@ async function logActivity(user, action, detail="") {
   } catch(e) {}
 }
 
-const APP_VERSION = "3.9.2";
+const APP_VERSION = "3.9.3";
 const BUILTIN_CATS = {
   aufwaermen: { label:"Aufwärmen", emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   uebung:     { label:"Übung",     emoji:"⚽", color:"#2563eb", bg:"#eff6ff", builtin:true },
@@ -2668,18 +2668,6 @@ function ProfileConfig({numTeams,profiles,setProfiles}) {
   </div>);
 }
 
-function TeamQuickAdd({allPlayers,team,allTeams,col,onAdd}) {
-  const notInThisTeam=allPlayers.filter(p=>!(team.players||[]).some(tp=>tp.id===p.id));
-  if(notInThisTeam.length===0) return null;
-  const inOtherTeam=id=>allTeams.some(t=>t.id!==team.id&&(t.players||[]).some(p=>p.id===id));
-  return(<div style={{padding:"4px 8px",borderTop:`1px solid ${col.border}33`}}>
-    <select onChange={e=>{if(e.target.value){onAdd(e.target.value);e.target.value=""}}} style={{width:"100%",fontSize:11,padding:"3px 4px",border:`1px solid ${col.border}`,borderRadius:6,background:"white",fontFamily:"inherit",color:C.text,cursor:"pointer"}}>
-      <option value="">+ Spieler hinzufügen</option>
-      {notInThisTeam.map(p=><option key={p.id} value={p.id}>{STR[p.strength||1].emoji} {p.name}{inOtherTeam(p.id)?" (anderes Team)":""}</option>)}
-    </select>
-  </div>);
-}
-
 function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
   const [genMode,setGenMode]=useState("balanced");
   const [numTeams,setNumTeams]=useState(ts.teams.length||Math.max(2,Math.round(allPlayers.length/3)));
@@ -2819,7 +2807,17 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
                 {unassigned.length===0&&(team.players||[]).length===0&&<div style={{fontSize:11,color:C.muted,textAlign:"center",padding:"8px 0"}}>Leer</div>}
               </div>
               {/* Quick-add: show all players not in THIS team */}
-              <TeamQuickAdd allPlayers={allPlayers} team={team} allTeams={ts.teams} col={col} onAdd={id=>movePlayer(id,team.id)}/>
+              {(()=>{
+                const notInThisTeam=allPlayers.filter(p=>!(team.players||[]).some(tp=>tp.id===p.id));
+                const inOtherTeam=id=>ts.teams.some(t=>t.id!==team.id&&(t.players||[]).some(p=>p.id===id));
+                if(notInThisTeam.length===0) return null;
+                return(<div style={{padding:"4px 8px",borderTop:`1px solid ${col.border}33`}}>
+                  <select onChange={e=>{if(e.target.value){movePlayer(e.target.value,team.id);e.target.value="";}}} style={{width:"100%",fontSize:11,padding:"3px 4px",border:`1px solid ${col.border}`,borderRadius:6,background:"white",fontFamily:"inherit",color:C.text,cursor:"pointer"}}>
+                    <option value="">+ Spieler hinzufügen</option>
+                    {notInThisTeam.map(p=>{const inOther=inOtherTeam(p.id);return(<option key={p.id} value={p.id}>{STR[p.strength||1].emoji} {p.name}{inOther?" (anderes Team)":""}</option>);})}
+                  </select>
+                </div>);
+              })()}
             </div>);
           })}
         </div>
