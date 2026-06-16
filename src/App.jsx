@@ -3653,7 +3653,7 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
                 <select value={u.role||"pending"} disabled={isSelf}
                   onChange={e=>setUserRole(u.uid,e.target.value)}
                   style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${r.color}`,background:r.bg,color:r.color,fontWeight:700,fontSize:12,cursor:isSelf?"default":"pointer",fontFamily:"inherit",outline:"none"}}>
-                  {Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}
+                  {Object.entries(USER_ROLES).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}
                 </select>
               </div>);
             })}
@@ -4050,8 +4050,8 @@ export default function App() {
   const [kassenbuch, setKassenbuch, kr]=useCloudStorage("kassenbuch", [], user);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
   const [lastExportAt,setLastExportAt]=useStorage("lastExportAt","");
-  const [customCats, setCustomCats    ]=useStorage("customCats", []);
-  const [teamsets,   setTeamsets        ]=useStorage("teamsets",   []);
+  const [customCats, setCustomCats    ]=useCloudStorage("customCats", [], user);
+  const [teamsets,   setTeamsets        ]=useCloudStorage("teamsets",   [], user);
   const saveTSets=x=>{
     setTeamsets(upsert(x));
     const name=typeof x==="object"&&!Array.isArray(x)?x.name||"Aufstellung":"Aufstellung";
