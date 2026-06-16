@@ -48,6 +48,7 @@ const USER_ROLES = {
   trainer: {label:"Trainer",  color:"#2563eb",bg:"#dbeafe",emoji:"🧑‍🏫"},
   eltern:  {label:"Eltern",   color:"#16a34a",bg:"#dcfce7",emoji:"👪"},
   pending: {label:"Ausstehend",color:"#92400e",bg:"#fef3c7",emoji:"⏳"},
+  banned:  {label:"Gesperrt", color:"#64748b",bg:"#f1f5f9",emoji:"🚫"},
 };
 const CAN = {
   // tabs visible
@@ -1263,7 +1264,7 @@ function CoachForm({coach,onSave,onClose}) {
   };
   return(<div>
     <Inp label="Name *" value={form.name} onChange={e=>set("name",e.target.value)}/>
-    <Sel label="Rolle" value={form.role} onChange={e=>set("role",e.target.value)}>{Object.entries(USER_ROLES).map(([k,v])=><option key={k} value={k}>{v}</option>)}</Sel>
+    <Sel label="Rolle" value={form.role} onChange={e=>set("role",e.target.value)}>{Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v}</option>)}</Sel>
     <Inp label="Telefon" value={form.phone} onChange={e=>set("phone",e.target.value)} placeholder="+49..."/>
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><input type="checkbox" id="ca" checked={form.active} onChange={e=>set("active",e.target.checked)} style={{width:16,height:16}}/><label htmlFor="ca" style={{fontSize:14,fontWeight:600,color:C.text,cursor:"pointer"}}>Aktiv</label></div>
     <Txta label="Notizen" value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2}/>
@@ -1510,7 +1511,7 @@ function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeleteP
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:12,width:"fit-content"}}>{tb("players","Spieler",players.length)}{tb("coaches","Trainer",coaches.length)}{tb("kontakte","Kontakte",players.filter(p=>(p.contacts||[]).length>0).length)}</div>
     {totalSel>0&&<div style={{borderRadius:10,border:`1.5px solid ${C.primary}`,background:C.accentL,padding:"10px 14px",marginBottom:12}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-        <span style={{fontWeight:800,color:C.primary,fontSize:14,flex:1}}>✓ {totalSel} Spieler ausgewählt</span>
+        <span style={{fontWeight:800,color:C.primary,fontSize:14,flex:1}}>✓ {selPlayers.length>0?`${selPlayers.length} Spieler`:""}{selPlayers.length>0&&selCoaches.length>0?" + ":""}{selCoaches.length>0?`${selCoaches.length} Trainer`:""} ausgewählt</span>
         <button onClick={()=>{setSelPlayers([]);setSelCoaches([]);}} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:13,fontFamily:"inherit",fontWeight:700}}>✕ Leeren</button>
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -3685,11 +3686,14 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
                   <div style={{fontWeight:700,fontSize:14,color:C.text}}>{u.name||u.uid}{isSelf&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>(du)</span>}</div>
                   <div style={{fontSize:11,color:C.muted,marginTop:1}}>{u.email||""}</div>
                 </div>
-                <select value={u.role||"pending"} disabled={isSelf}
-                  onChange={e=>setUserRole(u.uid,e.target.value)}
-                  style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${r.color}`,background:r.bg,color:r.color,fontWeight:700,fontSize:12,cursor:isSelf?"default":"pointer",fontFamily:"inherit",outline:"none"}}>
-                  {Object.entries(USER_ROLES).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}
-                </select>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+                  <select value={u.role||"pending"} disabled={isSelf}
+                    onChange={e=>setUserRole(u.uid,e.target.value)}
+                    style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${r.color}`,background:r.bg,color:r.color,fontWeight:700,fontSize:12,cursor:isSelf?"default":"pointer",fontFamily:"inherit",outline:"none"}}>
+                    {Object.entries(USER_ROLES).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}
+                  </select>
+                  {!isSelf&&<button title="Nutzer entfernen" onClick={()=>{if(window.confirm(`${u.name||u.email} wirklich entfernen? Der Zugriff wird sofort entzogen.`))setUserRole(u.uid,"banned");}} style={{padding:"5px 8px",borderRadius:8,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444",fontSize:12,flexShrink:0}}>🚫</button>}
+                </div>
               </div>);
             })}
           </div>
@@ -4006,19 +4010,32 @@ function useCloudStorage(key, def, user) {
 
 // ── PRESENCE BADGE ────────────────────────────────────────────────
 function PresenceBadge({onlineUsers, currentUser}) {
+  const [showList,setShowList]=useState(false);
   if(!onlineUsers||onlineUsers.length===0) return null;
   const others=onlineUsers.filter(u=>u.uid!==currentUser?.uid);
-  return(<div style={{position:"fixed",top:8,right:8,zIndex:9980,display:"flex",gap:4,alignItems:"center"}}>
-    {onlineUsers.map(u=>(
-      <div key={u.uid} title={`${u.name}${u.uid===currentUser?.uid?" (du)":""} · aktiv`}
-        style={{position:"relative",width:30,height:30,borderRadius:"50%",overflow:"hidden",border:`2px solid ${u.uid===currentUser?.uid?"#16a34a":"#f59e0b"}`,background:"#e2e8f0",flexShrink:0}}>
-        {u.photo
-          ?<img src={u.photo} width={30} height={30} style={{objectFit:"cover"}}/>
-          :<div style={{width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#64748b"}}>{(u.name||"?")[0].toUpperCase()}</div>}
-        <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:"#22c55e",border:"1.5px solid white"}}/>
-      </div>
-    ))}
-    {others.length>0&&<div style={{fontSize:11,color:"#16a34a",fontWeight:700,background:"white",borderRadius:20,padding:"2px 8px",boxShadow:"0 1px 4px rgba(0,0,0,.1)"}}>{others.length} online</div>}
+  return(<div style={{position:"fixed",top:8,right:8,zIndex:9980}}>
+    <div style={{display:"flex",gap:4,alignItems:"center",cursor:"pointer"}} onClick={()=>setShowList(s=>!s)}>
+      {onlineUsers.map(u=>(
+        <div key={u.uid} title={`${u.name||u.uid.slice(0,8)}${u.uid===currentUser?.uid?" (du)":""}`}
+          style={{position:"relative",width:30,height:30,borderRadius:"50%",overflow:"hidden",border:`2px solid ${u.uid===currentUser?.uid?"#16a34a":"#f59e0b"}`,background:"#e2e8f0",flexShrink:0}}>
+          {u.photo
+            ?<img src={u.photo} width={30} height={30} style={{objectFit:"cover"}}/>
+            :<div style={{width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#64748b"}}>{(u.name||"?")[0].toUpperCase()}</div>}
+          <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:"#22c55e",border:"1.5px solid white"}}/>
+        </div>
+      ))}
+      <div style={{fontSize:11,color:"#16a34a",fontWeight:700,background:"white",borderRadius:20,padding:"2px 8px",boxShadow:"0 1px 4px rgba(0,0,0,.1)"}}>{onlineUsers.length} online</div>
+    </div>
+    {showList&&<div style={{position:"absolute",top:38,right:0,background:"white",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,.15)",padding:"8px 0",minWidth:180,zIndex:9999}}>
+      <div style={{fontSize:10,fontWeight:800,color:"#64748b",textTransform:"uppercase",letterSpacing:.6,padding:"4px 12px 6px"}}>Aktive Nutzer</div>
+      {onlineUsers.map(u=><div key={u.uid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px"}}>
+        {u.photo?<img src={u.photo} width={22} height={22} style={{borderRadius:"50%"}}/>
+          :<div style={{width:22,height:22,borderRadius:"50%",background:"#dcfce7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#16a34a"}}>{(u.name||"?")[0].toUpperCase()}</div>}
+        <span style={{fontSize:13,fontWeight:600,color:"#1e293b"}}>{u.name?.split(" ")[0]||u.uid.slice(0,8)}</span>
+        {u.uid===currentUser?.uid&&<span style={{fontSize:10,color:"#64748b"}}>(du)</span>}
+        <div style={{width:7,height:7,borderRadius:"50%",background:"#22c55e",marginLeft:"auto"}}/>
+      </div>)}
+    </div>}
   </div>);
 }
 
@@ -4224,6 +4241,12 @@ export default function App() {
   // Role still loading
   if(user&&role===null) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⏳</div><div style={{fontWeight:700}}>Lade Berechtigungen...</div><div style={{fontSize:12,marginTop:8}}>Falls dies länger dauert, bitte neu laden</div></div></div>;
   // Pending - waiting for admin approval
+  if(user&&role==="banned") return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,flexDirection:"column",gap:16,padding:24}}>
+    <div style={{fontSize:56}}>🚫</div>
+    <div style={{fontWeight:900,fontSize:22,color:C.text}}>Zugriff gesperrt</div>
+    <div style={{color:C.muted,fontSize:14,textAlign:"center",maxWidth:280}}>Dein Zugriff wurde von einem Admin entzogen.</div>
+    <button onClick={logout} style={{padding:"8px 20px",borderRadius:10,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14}}>Abmelden</button>
+  </div>);
   if(user&&role==="pending") return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,flexDirection:"column",gap:16,padding:24}}>
     <div style={{fontSize:56}}>⏳</div>
     <div style={{fontWeight:900,fontSize:22,color:C.text}}>Zugriff ausstehend</div>
