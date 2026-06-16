@@ -4038,7 +4038,7 @@ export default function App() {
   // Redirect if current page not allowed for role
   useEffect(()=>{
     if(role&&!can(role,page)){
-      const allowed=["library","team","training","teamplaner","turnier","kasse","settings"].find(p=>can(role,p));
+      const allowed=["library","team","training","teamplaner","turnier","kasse","settings"].find(pg=>can(role,pg));
       if(allowed) setPage(allowed);
     }
   },[role,page]);
