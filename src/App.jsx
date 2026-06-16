@@ -91,6 +91,12 @@ function useRole(user) {
       connected=true;
       clearTimeout(fallback);
       if(snap.exists()){
+        // Update name/email/photo on each login in case they changed
+        const updates={};
+        if(user.email&&snap.data().email!==user.email) updates.email=user.email;
+        if(user.displayName&&snap.data().name!==user.displayName) updates.name=user.displayName;
+        if(user.photoURL&&snap.data().photo!==user.photoURL) updates.photo=user.photoURL;
+        if(Object.keys(updates).length>0) setDoc(doc(fbDb,"roles",user.uid),updates,{merge:true}).catch(()=>{});
         setRole(snap.data().role||"pending");
       } else {
         // New user: first ever = admin, otherwise pending
@@ -98,10 +104,20 @@ function useRole(user) {
           const rolesSnap=await getDocs(collection(fbDb,"roles"));
           const newRole=rolesSnap.empty?"admin":"pending";
           await setDoc(doc(fbDb,"roles",user.uid),{
-            uid:user.uid, name:user.displayName||user.email,
+            uid:user.uid, name:user.displayName||"",
+            email:user.email||"",
             photo:user.photoURL||null, role:newRole,
             createdAt:new Date().toISOString()
           });
+          // Notify admins if this is a new pending user
+          if(newRole==="pending"){
+            await addDoc(collection(fbDb,"activity"),{
+              uid:user.uid, name:user.displayName||user.email,
+              photo:user.photoURL||null,
+              action:"new_user", detail:user.displayName||user.email||"",
+              ts:new Date().toISOString()
+            });
+          }
           setRole(newRole);
         } catch(e){clearTimeout(fallback);setRole("pending");} // if write fails, pending
       }
@@ -127,8 +143,17 @@ function useRole(user) {
     if(!fbDb) return;
     await setDoc(doc(fbDb,"roles",uid),{role:newRole},{merge:true});
   };
+  const setUserName=async(uid,name)=>{
+    if(!fbDb) return;
+    await setDoc(doc(fbDb,"roles",uid),{name},{merge:true});
+  };
+  const deleteUser=async(uid)=>{
+    if(!fbDb) return;
+    await deleteDoc(doc(fbDb,"roles",uid));
+  };
 
-  return {role, allUsers, setUserRole};
+  const pendingCount=allUsers.filter(u=>u.role==="pending").length;
+  return {role, allUsers, setUserRole, pendingCount};
 }
 
 
@@ -2647,9 +2672,8 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
   const [genMode,setGenMode]=useState("balanced");
   const [numTeams,setNumTeams]=useState(ts.teams.length||Math.max(2,Math.round(allPlayers.length/3)));
   const [selIds,setSelIds]=useState(()=>{
-    // Pre-select players already in teams, or all active
-    const inTeams=ts.teams.flatMap(t=>t.players?.map(p=>p.id)||[]);
-    return inTeams.length>0?inTeams:allPlayers.map(p=>p.id);
+    // Always include all active players so unassigned ones can be added
+    return allPlayers.map(p=>p.id);
   });
   const [dragInfo,setDragInfo]=useState(null); // {playerId, fromTeamId}
   const [skillDist,setSkillDist]=useState({strong:0,weak:0});
@@ -2782,13 +2806,18 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
                 {/* Add unassigned player to this team */}
                 {unassigned.length===0&&(team.players||[]).length===0&&<div style={{fontSize:11,color:C.muted,textAlign:"center",padding:"8px 0"}}>Leer</div>}
               </div>
-              {/* Quick-add from unassigned */}
-              {unassigned.length>0&&<div style={{padding:"4px 8px",borderTop:`1px solid ${col.border}33`}}>
-                <select onChange={e=>{if(e.target.value){movePlayer(e.target.value,team.id);e.target.value="";}}} style={{width:"100%",fontSize:11,padding:"3px 4px",border:`1px solid ${col.border}`,borderRadius:6,background:"white",fontFamily:"inherit",color:C.text,cursor:"pointer"}}>
-                  <option value="">+ Spieler hinzufügen</option>
-                  {unassigned.map(p=><option key={p.id} value={p.id}>{STR[p.strength||1].emoji} {p.name}</option>)}
-                </select>
-              </div>}
+              {/* Quick-add: show all players not in THIS team */}
+              {(()=>{
+                const notInThisTeam=allPlayers.filter(p=>!(team.players||[]).some(tp=>tp.id===p.id));
+                const inOtherTeam=id=>ts.teams.some(t=>t.id!==team.id&&(t.players||[]).some(p=>p.id===id));
+                if(notInThisTeam.length===0) return null;
+                return(<div style={{padding:"4px 8px",borderTop:`1px solid ${col.border}33`}}>
+                  <select onChange={e=>{if(e.target.value){movePlayer(e.target.value,team.id);e.target.value="";}}} style={{width:"100%",fontSize:11,padding:"3px 4px",border:`1px solid ${col.border}`,borderRadius:6,background:"white",fontFamily:"inherit",color:C.text,cursor:"pointer"}}>
+                    <option value="">+ Spieler hinzufügen</option>
+                    {notInThisTeam.map(p=>{const inOther=inOtherTeam(p.id);return(<option key={p.id} value={p.id}>{STR[p.strength||1].emoji} {p.name}{inOther?" (anderes Team)":""}</option>);})}
+                  </select>
+                </div>);
+              })()}
             </div>);
           })}
         </div>
@@ -2852,7 +2881,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
 
     {modal?.type==="sessionDetail"&&modal.data&&<Modal title={fmtDate(modal.data.date)} onClose={()=>setModal(null)} wide><SessionDetailView s={modal.data} players={players} coaches={coaches} exercises={exercises} onEdit={()=>setModal({type:"session",data:modal.data})} onDelete={()=>{onDeleteSession(modal.data.id);setModal(null);}} onClose={()=>setModal(null)} onSaveSession={onSaveSession} onPrint={()=>printSession(modal.data,exercises,toast)} onReplan={()=>{const s=modal.data;setModal({type:"manual",replaceId:s.id,setup:{kids:Number(s.participantCount)||players.filter(p=>p.active).length,coachCount:s.coachIds?.length||1,duration:s.duration||60,location:s.location==="Halle"?"indoor":"outdoor",date:s.date,playerIds:s.playerIds||[],coachIds:s.coachIds||[],focus:"",planData:s.planData||null}});}}/></Modal>}
     {modal?.type==="exDetail"&&modal.data&&<Modal title="Übungsdetail" onClose={()=>setModal(null)}><div><div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}><CatBadge cat={modal.data.category}/><Stars value={modal.data.rating} readonly/><span style={{fontSize:13,color:C.muted,marginLeft:"auto"}}>⏱ {modal.data.duration} Min</span></div>{modal.data.setup&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>📐 Aufbau</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.setup}</div></div>}{modal.data.description&&<div style={{marginBottom:12}}><div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:4}}>🎯 Ablauf</div><div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",fontSize:14,lineHeight:1.6,border:`1px solid ${C.border}`}}>{modal.data.description}</div></div>}{modal.data.material?.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{modal.data.material.map(m=><span key={m} style={{padding:"3px 10px",borderRadius:20,background:C.accentL,color:C.primary,fontSize:12,fontWeight:700}}>📦 {m}</span>)}</div>}{modal.data.notes&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic"}}>💬 {modal.data.notes}</div>}</div></Modal>}
-    {modal?.type==="notfall"&&<Modal title="🚨 SOS-Notfall-Plan" onClose={()=>setModal(null)} wide><SOSModal players={players} onClose={()=>setModal(null)}/></Modal>}
+    {modal?.type==="notfall"&&<Modal title="🚨 SOS-Notfall-Plan" onClose={()=>setModal(null)} wide><NotfallModal exercises={exercises} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="setup"&&<Modal title="Training planen" onClose={()=>setModal(null)} wide><TrainingSetupModal players={players} coaches={coaches} initialSetup={modal.setup} onPlanManual={setup=>setModal({type:"manual",setup})} onPlanKI={setup=>setModal({type:"ki",setup})} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="manual"&&<Modal title="Manueller Trainingsplan" onClose={()=>setModal(null)} wide><ManualTrainingPlanner setup={modal.setup} exercises={exercises} players={players} coachesList={coaches} replaceId={modal.replaceId||null} onSaveSession={s=>{onSaveSession(s);setModal(null);toast("Training gespeichert");}} onSaveExercise={onSaveExercise} apiKey={apiKey} toast={toast} onClose={()=>setModal(null)}/></Modal>}
     {modal?.type==="ki"&&<Modal title="🤖 KI-Trainingsplan" onClose={()=>setModal(null)} wide><AITrainingModal setup={modal.setup} exercises={exercises} players={players} apiKey={apiKey} onSaveEx={onSaveExercise} onSaveSession={s=>{onSaveSession(s);setModal(null);toast("Training gespeichert");}} replaceId={modal.replaceId||null} onClose={()=>setModal(null)}/></Modal>}
@@ -3592,6 +3621,7 @@ function ActivityLog() {
     player_saved:"⚽ Spieler gespeichert",
     coach_saved:"🧑‍🏫 Trainer gespeichert",
     exercise_saved:"📚 Übung gespeichert",
+    new_user:"👤 Neuer Nutzer registriert",
   };
 
   const fmtTs=ts=>{
@@ -3644,7 +3674,35 @@ function ActivityLog() {
   </div>);
 }
 
-function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup,role,allUsers,setUserRole,prefs={},onPrefChange}) {
+function UserNameEditor({u,isSelf,setUserName}) {
+  const [editing,setEditing]=useState(false);
+  const [nameVal,setNameVal]=useState(u.name||"");
+  const save=()=>{
+    if(nameVal.trim()) setUserName(u.uid,nameVal.trim());
+    setEditing(false);
+  };
+  return(<div style={{flex:1,minWidth:0}}>
+    {editing
+      ?<div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <input value={nameVal} onChange={e=>setNameVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")save();if(e.key==="Escape")setEditing(false);}} autoFocus
+            style={{flex:1,padding:"4px 8px",border:`1.5px solid ${C.primary}`,borderRadius:6,fontSize:13,fontFamily:"inherit",outline:"none"}}/>
+          <button onClick={save} style={{padding:"4px 8px",borderRadius:6,border:"none",background:C.primary,color:"white",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>✓</button>
+          <button onClick={()=>setEditing(false)} style={{padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:"white",color:C.muted,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+        </div>
+      :<div style={{display:"flex",alignItems:"center",gap:6}}>
+          <div>
+            <div style={{fontWeight:700,fontSize:14,color:C.text,display:"flex",alignItems:"center",gap:4}}>
+              {u.name||<span style={{color:C.muted,fontStyle:"italic"}}>Kein Name</span>}
+              {isSelf&&<span style={{fontSize:11,color:C.muted}}>(du)</span>}
+              <button onClick={()=>setEditing(true)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:"0 2px",lineHeight:1}}><Edit2 size={11}/></button>
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginTop:1}}>{u.email||u.uid.slice(0,12)}</div>
+          </div>
+        </div>}
+  </div>);
+}
+
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup,role,allUsers,setUserRole,setUserName,deleteUser,prefs={},onPrefChange}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));
     const t=d.type||"unknown";
@@ -3682,17 +3740,15 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
               return(<div key={u.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,background:C.card,border:`1.5px solid ${C.border}`}}>
                 {u.photo?<img src={u.photo} width={36} height={36} style={{borderRadius:"50%",flexShrink:0}}/>
                   :<div style={{width:36,height:36,borderRadius:"50%",background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:C.primary,flexShrink:0}}>{(u.name||"?")[0].toUpperCase()}</div>}
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{u.name||u.uid}{isSelf&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>(du)</span>}</div>
-                  <div style={{fontSize:11,color:C.muted,marginTop:1}}>{u.email||""}</div>
-                </div>
+                <UserNameEditor u={u} isSelf={isSelf} setUserName={setUserName}/>
                 <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
                   <select value={u.role||"pending"} disabled={isSelf}
                     onChange={e=>setUserRole(u.uid,e.target.value)}
                     style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${r.color}`,background:r.bg,color:r.color,fontWeight:700,fontSize:12,cursor:isSelf?"default":"pointer",fontFamily:"inherit",outline:"none"}}>
                     {Object.entries(USER_ROLES).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}
                   </select>
-                  {!isSelf&&<button title="Nutzer entfernen" onClick={()=>{if(window.confirm(`${u.name||u.email} wirklich entfernen? Der Zugriff wird sofort entzogen.`))setUserRole(u.uid,"banned");}} style={{padding:"5px 8px",borderRadius:8,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444",fontSize:12,flexShrink:0}}>🚫</button>}
+                  {!isSelf&&<button title="Sperren" onClick={()=>{if(window.confirm(`${u.name||u.email} sperren? Zugriff wird sofort entzogen.`))setUserRole(u.uid,"banned");}} style={{padding:"5px 8px",borderRadius:8,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444",fontSize:12,flexShrink:0}}>🚫</button>}
+                  {!isSelf&&<button title="Komplett löschen" onClick={()=>{if(window.confirm(`${u.name||u.email} komplett löschen? Der Nutzer kann sich erneut registrieren und landet dann auf "Ausstehend".`))deleteUser(u.uid);}} style={{padding:"5px 8px",borderRadius:8,border:"1px solid #e2e8f0",background:"#f8fafc",cursor:"pointer",color:"#64748b",fontSize:12,flexShrink:0}}>🗑</button>}
                 </div>
               </div>);
             })}
@@ -3885,7 +3941,7 @@ function BirthdayBanner({players}) {
 
 
 function Nav({page,setPage,counts}) {
-  const allItems=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"teamplaner",icon:Shuffle,label:"Teams",count:counts.teamsets},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
+  const allItems=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"teamplaner",icon:Shuffle,label:"Teams",count:counts.teamsets},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen",alert:counts.pendingCount>0}];
   const items=allItems.filter(i=>can(counts.role,i.key)||(i.key==="settings"&&(counts.role==="trainer"||counts.role==="eltern")));
   return(<>
     <style>{`.gn{position:fixed;left:0;top:0;bottom:0;width:200px;background:${C.nav};display:flex;flex-direction:column;z-index:100;padding:0 12px 20px}.gm{display:flex;margin-left:200px;padding:28px;max-width:1100px}.gb{display:none;position:fixed;bottom:0;left:0;right:0;background:${C.nav};z-index:100;border-top:1px solid rgba(255,255,255,.1)}@media(max-width:640px){.gn{display:none}.gb{display:flex}.gm{margin-left:0!important;padding:16px;padding-bottom:80px}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -3897,7 +3953,7 @@ function Nav({page,setPage,counts}) {
       </div>
       {items.map(({key,icon:Icon,label,count})=><button key={key} onClick={()=>setPage(key)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,border:"none",cursor:"pointer",marginBottom:4,width:"100%",textAlign:"left",fontFamily:"inherit",background:page===key?"rgba(34,197,94,.2)":"transparent",color:page===key?"#4ade80":"rgba(255,255,255,.6)"}}><Icon size={18} strokeWidth={page===key?2.5:1.8}/><span style={{fontSize:14,fontWeight:700,flex:1}}>{label}</span>{count!==undefined&&<span style={{fontSize:11,background:"rgba(255,255,255,.1)",borderRadius:20,padding:"1px 7px",color:"rgba(255,255,255,.5)"}}>{count}</span>}</button>)}
     </div>
-    <div className="gb">{items.map(({key,icon:Icon,label})=><button key={key} onClick={()=>setPage(key)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 4px",border:"none",cursor:"pointer",background:"transparent",color:page===key?"#4ade80":"rgba(255,255,255,.5)",fontFamily:"inherit"}}><Icon size={18} strokeWidth={page===key?2.5:1.8}/><span style={{fontSize:9,fontWeight:700}}>{label}</span></button>)}</div>
+    <div className="gb">{items.map(({key,icon:Icon,label,alert})=><button key={key} onClick={()=>setPage(key)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 4px",border:"none",cursor:"pointer",background:"transparent",color:page===key?"#4ade80":"rgba(255,255,255,.5)",fontFamily:"inherit",position:"relative"}}><Icon size={18} strokeWidth={page===key?2.5:1.8}/>{alert&&<span style={{position:"absolute",top:6,left:"50%",transform:"translateX(6px)",background:"#ef4444",width:7,height:7,borderRadius:"50%",display:"block"}}/>}<span style={{fontSize:9,fontWeight:700}}>{label}</span></button>)}</div>
   </>);
 }
 
@@ -4154,8 +4210,15 @@ export default function App() {
   useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
   const [pendingSetup,setPendingSetup]=useState(null);
   const { user, login, loginEmail, registerEmail, resetPassword, logout, onlineUsers } = useFirebaseAuth();
-  const { role, allUsers, setUserRole } = useRole(user);
+  const { role, allUsers, setUserRole, setUserName, deleteUser, pendingCount } = useRole(user);
   const [prefs, setPrefs] = usePersonalSettings(user?.uid);
+  const prevPendingRef = React.useRef(pendingCount);
+  useEffect(()=>{
+    if(role==="admin"&&pendingCount>prevPendingRef.current){
+      toast(`👤 Neuer Nutzer wartet auf Freischaltung!`,"warn");
+    }
+    prevPendingRef.current=pendingCount;
+  },[pendingCount,role]);
   const toggleDark = (val) => { setPrefs({darkMode:val}); setDarkMode(val); applyTheme(val); };
   // Apply default page from prefs
   useEffect(()=>{ if(prefs.defaultPage&&!sessionStorage.getItem("gjPage")) setPage(prefs.defaultPage); },[prefs.defaultPage]);
@@ -4260,7 +4323,7 @@ export default function App() {
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
     <PresenceBadge onlineUsers={onlineUsers} currentUser={user}/>
-    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length,role}}/>
+    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length,role,pendingCount:role==="admin"?pendingCount:0}}/>
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{const i=exercises.find(e=>e.id===id);setExercises(prev=>prev.filter(e=>e.id!==id));showUndo("Übung",i,()=>setExercises(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast}/>}
       {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={can(role,"editAnything")?savePl:null} onDeletePlayer={can(role,"editAnything")?id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}:null} onSaveCoach={can(role,"editAnything")?saveCo:null} onDeleteCoach={can(role,"editAnything")?id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}:null} toast={toast} showStrength={can(role,"seeStrength")} readOnly={!can(role,"editAnything")} onAddToTraining={can(role,"editAnything")?({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}:null}/>}
@@ -4268,7 +4331,7 @@ export default function App() {
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} />}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
       {page==="kasse"    &&can(role,"kasse")&&<KassePage kassenbuch={kassenbuch} onSave={can(role,"editKasse")?saveKa:null} onDelete={can(role,"editKasse")?id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}:null} readOnly={!can(role,"editKasse")} toast={toast}/>}
-      {(can(role,"settings")||role==="trainer"||role==="eltern")&&page==="settings"&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole} prefs={prefs} onPrefChange={toggleDark}/>}
+      {(can(role,"settings")||role==="trainer"||role==="eltern")&&page==="settings"&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole} setUserName={setUserName} deleteUser={deleteUser} prefs={prefs} onPrefChange={toggleDark}/>}
     </main>
     {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
       <span style={{fontSize:13,fontWeight:600,flex:1}}>{undoBuf.label}</span>
