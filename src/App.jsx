@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Dexie from "dexie";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, deleteDoc, collection, addDoc, query, orderBy, limit, getDocs, serverTimestamp } from "firebase/firestore";
 import { BookOpen, Users, CalendarDays, Settings, Plus, Search, Edit2, Trash2, Download, Upload, Shuffle, Filter, Clock, Trophy, Bot, RefreshCw, CheckSquare, Square, Dices, ListChecks, Wallet, Phone, MapPin, AlertTriangle, ShieldCheck } from "lucide-react";
 
 // ── DEXIE DB ──────────────────────────────────────────────────────
@@ -39,6 +39,104 @@ async function fbWrite(col, items) {
   try {
     await setDoc(doc(fbDb,"shared",col),{items, updatedAt: new Date().toISOString()});
   } catch(e) { console.warn("fbWrite",col,e); }
+}
+// ── ROLE SYSTEM ───────────────────────────────────────────────────
+// Roles: "admin" | "trainer" | "eltern" | "pending"
+// Permissions per role
+const USER_ROLES = {
+  admin:   {label:"Admin",    color:"#dc2626",bg:"#fee2e2",emoji:"👑"},
+  trainer: {label:"Trainer",  color:"#2563eb",bg:"#dbeafe",emoji:"🧑‍🏫"},
+  eltern:  {label:"Eltern",   color:"#16a34a",bg:"#dcfce7",emoji:"👪"},
+  pending: {label:"Ausstehend",color:"#92400e",bg:"#fef3c7",emoji:"⏳"},
+};
+const CAN = {
+  // tabs visible
+  library:  ["admin","trainer"],
+  team:     ["admin","trainer","eltern"],
+  training: ["admin","trainer","eltern"],
+  teamplaner:["admin","trainer","eltern"],
+  turnier:  ["admin","trainer","eltern"],
+  kasse:    ["admin","trainer"],
+  settings: ["admin"],
+  // actions
+  editAnything:   ["admin","trainer"],
+  editKasse:      ["admin"],
+  seeStrength:    ["admin","trainer"],
+  manageRoles:    ["admin"],
+  seeActivity:    ["admin"],
+};
+function can(role, perm) {
+  return (CAN[perm]||[]).includes(role||"pending");
+}
+
+function useRole(user) {
+  const [role,setRole]=useState(null); // null=loading
+  const [allUsers,setAllUsers]=useState([]);
+
+  useEffect(()=>{
+    if(!fbDb||!user){setRole(user===null?"pending":null);return;}
+    // Listen to own role doc
+    const unsub=onSnapshot(doc(fbDb,"roles",user.uid),async snap=>{
+      if(snap.exists()){
+        setRole(snap.data().role||"pending");
+      } else {
+        // First user ever = admin, otherwise pending
+        try {
+          const rolesSnap=await getDocs(collection(fbDb,"roles"));
+          const newRole=rolesSnap.empty?"admin":"pending";
+          await setDoc(doc(fbDb,"roles",user.uid),{
+            uid:user.uid, name:user.displayName||user.email,
+            photo:user.photoURL||null, role:newRole,
+            createdAt:new Date().toISOString()
+          });
+          setRole(newRole);
+        } catch(e){setRole("pending");}
+      }
+    },()=>setRole("pending"));
+    return unsub;
+  },[user]);
+
+  // Admin: listen to all users
+  useEffect(()=>{
+    if(!fbDb||!user) return;
+    const unsub=onSnapshot(collection(fbDb,"roles"),snap=>{
+      setAllUsers(snap.docs.map(d=>d.data()).sort((a,b)=>(a.name||"").localeCompare(b.name||"")));
+    },()=>{});
+    return unsub;
+  },[user]);
+
+  const setUserRole=async(uid,newRole)=>{
+    if(!fbDb) return;
+    await setDoc(doc(fbDb,"roles",uid),{role:newRole},{merge:true});
+  };
+
+  return {role, allUsers, setUserRole};
+}
+
+
+// ── PRESENCE ──────────────────────────────────────────────────────
+async function setPresence(user, online) {
+  if(!fbDb||!user) return;
+  try {
+    await setDoc(doc(fbDb,"presence",user.uid),{
+      uid:user.uid, name:user.displayName||user.email,
+      photo:user.photoURL||null,
+      online, lastSeen:new Date().toISOString()
+    });
+  } catch(e) {}
+}
+
+// ── ACTIVITY LOG ──────────────────────────────────────────────────
+async function logActivity(user, action, detail="") {
+  if(!fbDb||!user) return;
+  try {
+    await addDoc(collection(fbDb,"activity"),{
+      uid:user.uid, name:user.displayName||user.email,
+      photo:user.photoURL||null,
+      action, detail,
+      ts:new Date().toISOString()
+    });
+  } catch(e) {}
 }
 
 const APP_VERSION = "3.9.2";
@@ -1115,7 +1213,7 @@ function CoachForm({coach,onSave,onClose}) {
   };
   return(<div>
     <Inp label="Name *" value={form.name} onChange={e=>set("name",e.target.value)}/>
-    <Sel label="Rolle" value={form.role} onChange={e=>set("role",e.target.value)}>{Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v}</option>)}</Sel>
+    <Sel label="Rolle" value={form.role} onChange={e=>set("role",e.target.value)}>{Object.entries(USER_ROLES).map(([k,v])=><option key={k} value={k}>{v}</option>)}</Sel>
     <Inp label="Telefon" value={form.phone} onChange={e=>set("phone",e.target.value)} placeholder="+49..."/>
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><input type="checkbox" id="ca" checked={form.active} onChange={e=>set("active",e.target.checked)} style={{width:16,height:16}}/><label htmlFor="ca" style={{fontSize:14,fontWeight:600,color:C.text,cursor:"pointer"}}>Aktiv</label></div>
     <Txta label="Notizen" value={form.notes} onChange={e=>set("notes",e.target.value)} rows={2}/>
@@ -1144,7 +1242,7 @@ function getBdInfo(p) {
     date:`${pad(dd)}.${pad(mm)}.${parts[0]}`};
 }
 
-function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
+function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel,showStrength=true}) {
   const [search,setSearch]=useState("");
   const [sortBy,setSortBy]=useState("name");     // name|strength|birthday|jersey
   const [filterStr,setFilterStr]=useState("");   // ""=all|"1"|"2"|"3"|"4"
@@ -1238,7 +1336,7 @@ function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
           {/* Checkbox */}
           <div style={{color:isSel?C.primary:C.muted,flexShrink:0}}>{isSel?<CheckSquare size={17}/>:<Square size={17}/>}</div>
           {/* Strength dot */}
-          <div style={{width:8,height:8,borderRadius:"50%",background:STR[p.strength]?.color||"#e2e8f0",flexShrink:0}}/>
+          <div style={{width:8,height:8,borderRadius:"50%",background:showStrength!==false?(STR[p.strength]?.color||"#e2e8f0"):"#e2e8f0",flexShrink:0}}/>
           {/* Name + meta */}
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontWeight:800,fontSize:14,color:C.text,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -1247,17 +1345,17 @@ function PlayerList({players,selPlayers,setSelPlayers,onEdit,onDel}) {
               {!p.active&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:10,background:"#fef3c7",color:"#d97706",fontWeight:700}}>inaktiv</span>}
             </div>
             <div style={{display:"flex",gap:8,marginTop:2,flexWrap:"wrap",alignItems:"center"}}>
-              <span style={{fontSize:11,color:STR[p.strength]?.color||C.muted,fontWeight:600}}>{STR[p.strength]?.emoji} {STR[p.strength]?.label}</span>
+              {showStrength!==false&&<span style={{fontSize:11,color:STR[p.strength]?.color||C.muted,fontWeight:600}}>{STR[p.strength]?.emoji} {STR[p.strength]?.label}</span>}
               {p.jersey&&<span style={{fontSize:11,color:C.muted}}>#{p.jersey}</span>}
               {bd&&<span style={{fontSize:11,fontWeight:bd.isToday||bd.wasPast||bd.isSoon?700:400,color:bd.isToday?"#16a34a":bd.wasPast?"#92400e":bd.isSoon?"#7c3aed":C.muted}}>🎂 {bd.label}</span>}
               {(p.contacts||[]).length>0&&<span style={{fontSize:11,color:C.muted}}>📞 {p.contacts.length}</span>}
             </div>
           </div>
           {/* Actions */}
-          <div style={{display:"flex",gap:2,flexShrink:0}} onClick={e=>e.stopPropagation()}>
-            <button onClick={()=>onEdit(p)} style={{padding:6,borderRadius:6,border:"none",background:"transparent",cursor:"pointer",color:C.muted}}><Edit2 size={14}/></button>
-            <button onClick={()=>onDel(p)} style={{padding:6,borderRadius:6,border:"none",background:"transparent",cursor:"pointer",color:"#ef4444"}}><Trash2 size={14}/></button>
-          </div>
+          {(onEdit||onDel)&&<div style={{display:"flex",gap:2,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            {onEdit&&<button onClick={()=>onEdit(p)} style={{padding:6,borderRadius:6,border:"none",background:"transparent",cursor:"pointer",color:C.muted}}><Edit2 size={14}/></button>}
+            {onDel&&<button onClick={()=>onDel(p)} style={{padding:6,borderRadius:6,border:"none",background:"transparent",cursor:"pointer",color:"#ef4444"}}><Trash2 size={14}/></button>}
+          </div>}
         </div>);
       })}
       {filtered.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:C.muted,fontSize:14}}>Keine Spieler gefunden.</div>}
@@ -1314,7 +1412,7 @@ function AddToSessionModal({playerIds,sessions,players,onSaveSession,onClose,toa
   </div>);
 }
 
-function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeletePlayer,onSaveCoach,onDeleteCoach,toast,onAddToTraining}) {
+function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeletePlayer,onSaveCoach,onDeleteCoach,toast,onAddToTraining,showStrength=true,readOnly=false}) {
   const [tab,setTab]=useState("players");
   const [modal,setModal]=useState(null);
   const [del,setDel]=useState(null);
@@ -1371,9 +1469,11 @@ function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeleteP
         <Btn sm variant="secondary" onClick={()=>setModal({type:"teamBuilder",players:players.filter(p=>selPlayers.includes(p.id))})}><Shuffle size={13}/> Teams bilden</Btn>
       </div>
     </div>}
-    {tab==="players"&&(players.length===0?<Empty icon="👦" title="Noch keine Spieler" onAdd={()=>setModal({type:"pf",data:null})} addLabel="Ersten Spieler anlegen"/>:
+    {tab==="players"&&(players.length===0?<Empty icon="👦" title="Noch keine Spieler" onAdd={!readOnly&&onSavePlayer?()=>setModal({type:"pf",data:null}):null} addLabel="Ersten Spieler anlegen"/>:
       <PlayerList players={players} selPlayers={selPlayers} setSelPlayers={setSelPlayers}
-        onEdit={p=>setModal({type:"pf",data:p})} onDel={p=>setDel({type:"player",id:p.id,name:p.name})}/>
+        onEdit={!readOnly&&onSavePlayer?p=>setModal({type:"pf",data:p}):null}
+        onDel={!readOnly&&onDeletePlayer?p=>setDel({type:"player",id:p.id,name:p.name}):null}
+        showStrength={showStrength}/>
     )}
     {tab==="coaches"&&(coaches.length===0?<Empty icon="🧑‍🏫" title="Noch keine Trainer" onAdd={()=>setModal({type:"cf",data:null})} addLabel="Ersten Trainer anlegen"/>:
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
@@ -2329,7 +2429,7 @@ function TeamDetailView({ts,onEdit,onClose,toast}) {
   </div>);
 }
 
-function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast}) {
+function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast,readOnly=false,showStrength=true}) {
   const [view,setView]=useState("list");
   const [editTs,setEditTs]=useState(null);
   const [detailTs,setDetailTs]=useState(null);
@@ -2386,7 +2486,7 @@ function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast}) 
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
       <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Teams</h1>
       <div style={{fontSize:13,color:C.muted,marginTop:2}}>{sorted.length} gespeicherte Aufstellungen</div></div>
-      <Btn onClick={openNew}><Plus size={15}/> Neue Aufstellung</Btn>
+      {!readOnly&&onSaveTeamset&&<Btn onClick={openNew}><Plus size={15}/> Neue Aufstellung</Btn>}
     </div>
 
     {sorted.length===0&&<div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
@@ -3410,7 +3510,90 @@ function AddCatForm({onAdd}) {
     <Btn sm onClick={add}><Plus size={13}/> Hinzufügen</Btn>
   </div>);
 }
-function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup}) {
+// ── ACTIVITY LOG COMPONENT ────────────────────────────────────────
+function ActivityLog() {
+  const [entries,setEntries]=useState([]);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{
+    if(!fbDb){setLoading(false);return;}
+    // Load last 50 activity entries
+    const load=async()=>{
+      try {
+        const q=query(collection(fbDb,"activity"),orderBy("ts","desc"),limit(50));
+        const snap=await getDocs(q);
+        setEntries(snap.docs.map(d=>({id:d.id,...d.data()})));
+      } catch(e){console.warn("activity load",e);}
+      setLoading(false);
+    };
+    load();
+    // Live updates
+    const q2=query(collection(fbDb,"activity"),orderBy("ts","desc"),limit(50));
+    const unsub=onSnapshot(q2,snap=>{
+      setEntries(snap.docs.map(d=>({id:d.id,...d.data()})));
+    },()=>{});
+    return unsub;
+  },[]);
+
+  const ACTION_LABELS={
+    teams_saved:"👥 Teams gespeichert",
+    session_saved:"📅 Training gespeichert",
+    player_saved:"⚽ Spieler gespeichert",
+    coach_saved:"🧑‍🏫 Trainer gespeichert",
+    exercise_saved:"📚 Übung gespeichert",
+  };
+
+  const fmtTs=ts=>{
+    if(!ts) return "";
+    const d=new Date(ts);
+    const now=new Date();
+    const diff=Math.floor((now-d)/1000);
+    if(diff<60) return "gerade eben";
+    if(diff<3600) return `vor ${Math.floor(diff/60)} Min`;
+    if(diff<86400) return `vor ${Math.floor(diff/3600)} Std`;
+    return d.toLocaleDateString("de-DE",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  };
+
+  if(loading) return <div style={{padding:"20px 0",textAlign:"center",color:C.muted}}>Lädt...</div>;
+  if(!fbDb) return <div style={{padding:"20px 0",textAlign:"center",color:C.muted}}>Nicht verfügbar (kein Firebase)</div>;
+  if(entries.length===0) return <div style={{padding:"20px 0",textAlign:"center",color:C.muted}}>Noch keine Aktivitäten</div>;
+
+  // Group consecutive same-user same-action entries to spot repeated attempts
+  const grouped=[];
+  entries.forEach(e=>{
+    const last=grouped[grouped.length-1];
+    if(last&&last.uid===e.uid&&last.action===e.action&&last.detail===e.detail&&
+       (new Date(last.ts)-new Date(e.ts))<300000) {
+      last.count=(last.count||1)+1;
+      last.firstTs=e.ts;
+    } else {
+      grouped.push({...e,count:1});
+    }
+  });
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:6}}>
+    {grouped.map((e,i)=>(
+      <div key={e.id||i} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"8px 12px",borderRadius:8,background:e.count>2?"#fff7ed":C.card,border:`1px solid ${e.count>2?"#fed7aa":C.border}`}}>
+        {e.photo
+          ?<img src={e.photo} width={28} height={28} style={{borderRadius:"50%",flexShrink:0}}/>
+          :<div style={{width:28,height:28,borderRadius:"50%",background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:C.primary,flexShrink:0}}>{(e.name||"?")[0].toUpperCase()}</div>}
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{fontWeight:700,fontSize:13,color:C.text}}>{e.name?.split(" ")[0]||"Unbekannt"}</span>
+            <span style={{fontSize:12,color:C.muted}}>{ACTION_LABELS[e.action]||e.action}</span>
+            {e.detail&&<span style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>„{e.detail}"</span>}
+            {e.count>1&&<span style={{fontSize:11,padding:"1px 7px",borderRadius:20,background:e.count>3?"#fef3c7":"#f1f5f9",color:e.count>3?"#92400e":C.muted,fontWeight:700}}>
+              {e.count}× wiederholt{e.count>3?" ⚠️":""}
+            </span>}
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:2}}>{fmtTs(e.ts)}</div>
+        </div>
+      </div>
+    ))}
+  </div>);
+}
+
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup,role,allUsers,setUserRole}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));
     const t=d.type||"unknown";
@@ -3425,7 +3608,41 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
   const EC=({icon,title,desc,sub,fn})=><div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><div style={{fontWeight:700,fontSize:14,color:C.text}}>{icon} {title}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{desc}</div>{sub&&<div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{sub}</div>}</div><Btn sm onClick={fn}><Download size={13}/> Export</Btn></div>;
   const Sec=({title,ch})=><div style={{marginBottom:28}}><h2 style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:14,paddingBottom:8,borderBottom:`2px solid ${C.accentL}`}}>{title}</h2>{ch}</div>;
   return(<div>
-    <div style={{marginBottom:20}}><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Einstellungen</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>G-Jugend Coach · v{APP_VERSION}</div></div>
+    <div style={{marginBottom:16}}><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Einstellungen</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>G-Jugend Coach · v{APP_VERSION}</div></div>
+    {/* Tabs */}
+    {(()=>{
+      const [stab,setStab]=useState("general");
+      const stb=(k,l)=><button onClick={()=>setStab(k)} style={{padding:"7px 16px",borderRadius:7,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:stab===k?C.primary:"transparent",color:stab===k?"white":C.muted}}>{l}</button>;
+      return(<div>
+        <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:16,width:"fit-content"}}>
+          {stb("general","⚙️ Allgemein")}
+          {can(role,"manageRoles")&&stb("users","👥 Nutzer")}
+          {can(role,"seeActivity")&&stb("activity","📋 Aktivität")}
+        </div>
+        {stab==="activity"&&<ActivityLog/>}
+        {stab==="users"&&<div>
+          <div style={{marginBottom:12,fontSize:13,color:C.muted}}>Alle registrierten Nutzer und ihre Berechtigungen.</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {(allUsers||[]).map(u=>{
+              const r=USER_ROLES[u.role||"pending"]||USER_ROLES.pending;
+              const isSelf=u.uid===firebaseUser?.uid;
+              return(<div key={u.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,background:C.card,border:`1.5px solid ${C.border}`}}>
+                {u.photo?<img src={u.photo} width={36} height={36} style={{borderRadius:"50%",flexShrink:0}}/>
+                  :<div style={{width:36,height:36,borderRadius:"50%",background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,color:C.primary,flexShrink:0}}>{(u.name||"?")[0].toUpperCase()}</div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,color:C.text}}>{u.name||u.uid}{isSelf&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>(du)</span>}</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:1}}>{u.email||""}</div>
+                </div>
+                <select value={u.role||"pending"} disabled={isSelf}
+                  onChange={e=>setUserRole(u.uid,e.target.value)}
+                  style={{padding:"5px 10px",borderRadius:8,border:`1.5px solid ${r.color}`,background:r.bg,color:r.color,fontWeight:700,fontSize:12,cursor:isSelf?"default":"pointer",fontFamily:"inherit",outline:"none"}}>
+                  {Object.entries(ROLES).map(([k,v])=><option key={k} value={k}>{v.emoji} {v.label}</option>)}
+                </select>
+              </div>);
+            })}
+          </div>
+        </div>}
+        {stab==="general"&&<div>
     {/* Firebase user info */}
     {firebaseUser&&<div style={{marginBottom:16,padding:"12px 14px",background:"#f0fdf4",borderRadius:12,border:"1.5px solid #bbf7d0",display:"flex",alignItems:"center",gap:12}}>
       {firebaseUser.photoURL&&<img src={firebaseUser.photoURL} width={36} height={36} style={{borderRadius:"50%"}} alt=""/>}
@@ -3471,6 +3688,9 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
     </div>}/>
     <Sec title="🐛 Export Debug" ch={<DebugExportPanel toast={toast}/>}/>
     <div style={{textAlign:"center",padding:"20px 0",color:"#cbd5e1",fontSize:12}}>G-Jugend Coach v{APP_VERSION} · Made with ⚽ for G-Jugend Hamburg</div>
+        </div>}
+      </div>);
+    })()}
   </div>);
 }
 
@@ -3542,7 +3762,8 @@ function BirthdayBanner({players}) {
 
 
 function Nav({page,setPage,counts}) {
-  const items=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"teamplaner",icon:Shuffle,label:"Teams",count:counts.teamsets},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
+  const allItems=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"teamplaner",icon:Shuffle,label:"Teams",count:counts.teamsets},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
+  const items=allItems.filter(i=>can(counts.role,i.key));
   return(<>
     <style>{`.gn{position:fixed;left:0;top:0;bottom:0;width:200px;background:${C.nav};display:flex;flex-direction:column;z-index:100;padding:0 12px 20px}.gm{display:flex;margin-left:200px;padding:28px;max-width:1100px}.gb{display:none;position:fixed;bottom:0;left:0;right:0;background:${C.nav};z-index:100;border-top:1px solid rgba(255,255,255,.1)}@media(max-width:640px){.gn{display:none}.gb{display:flex}.gm{margin-left:0!important;padding:16px;padding-bottom:80px}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     <div className="gn">
@@ -3560,15 +3781,49 @@ function Nav({page,setPage,counts}) {
 // ── APP ───────────────────────────────────────────────────────────
 // ── FIREBASE AUTH HOOK ────────────────────────────────────────────
 function useFirebaseAuth() {
-  const [user, setUser] = useState(undefined); // undefined=loading, null=signed out
+  const [user, setUser] = useState(undefined);
+  const [onlineUsers, setOnlineUsers] = useState([]);
+
   useEffect(() => {
     if(!fbAuth) { setUser(null); return; }
-    const unsub = onAuthStateChanged(fbAuth, u => setUser(u ?? null));
+    const unsub = onAuthStateChanged(fbAuth, u => {
+      setUser(u ?? null);
+      if(u) {
+        setPresence(u, true);
+        // Update presence on visibility change
+        const onVis = () => setPresence(u, !document.hidden);
+        document.addEventListener("visibilitychange", onVis);
+        window.addEventListener("beforeunload", () => setPresence(u, false));
+        return () => document.removeEventListener("visibilitychange", onVis);
+      } else {
+        setPresence(u, false);
+      }
+    });
     return unsub;
   }, []);
+
+  // Subscribe to presence collection
+  useEffect(() => {
+    if(!fbDb) return;
+    const unsub = onSnapshot(doc(fbDb,"presence","_dummy"), ()=>{}, ()=>{});
+    // Listen to all presence docs
+    const unsubPresence = onSnapshot(
+      collection(fbDb,"presence"),
+      snap => {
+        const now = Date.now();
+        const users = snap.docs
+          .map(d => d.data())
+          .filter(u => u.online && u.lastSeen && (now - new Date(u.lastSeen).getTime()) < 5*60*1000);
+        setOnlineUsers(users);
+      },
+      () => {}
+    );
+    return unsubPresence;
+  }, []);
+
   const login  = () => signInWithPopup(fbAuth, new GoogleAuthProvider()).catch(e=>console.warn("login",e));
-  const logout = () => signOut(fbAuth);
-  return { user, login, logout };
+  const logout = () => { if(user) setPresence(user, false); signOut(fbAuth); };
+  return { user, login, logout, onlineUsers };
 }
 
 // ── FIREBASE SYNC HOOK ────────────────────────────────────────────
@@ -3615,6 +3870,24 @@ function useCloudStorage(key, def, user) {
   return [data, save, ready];
 }
 
+// ── PRESENCE BADGE ────────────────────────────────────────────────
+function PresenceBadge({onlineUsers, currentUser}) {
+  if(!onlineUsers||onlineUsers.length===0) return null;
+  const others=onlineUsers.filter(u=>u.uid!==currentUser?.uid);
+  return(<div style={{position:"fixed",top:8,right:8,zIndex:9980,display:"flex",gap:4,alignItems:"center"}}>
+    {onlineUsers.map(u=>(
+      <div key={u.uid} title={`${u.name}${u.uid===currentUser?.uid?" (du)":""} · aktiv`}
+        style={{position:"relative",width:30,height:30,borderRadius:"50%",overflow:"hidden",border:`2px solid ${u.uid===currentUser?.uid?"#16a34a":"#f59e0b"}`,background:"#e2e8f0",flexShrink:0}}>
+        {u.photo
+          ?<img src={u.photo} width={30} height={30} style={{objectFit:"cover"}}/>
+          :<div style={{width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#64748b"}}>{(u.name||"?")[0].toUpperCase()}</div>}
+        <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:"#22c55e",border:"1.5px solid white"}}/>
+      </div>
+    ))}
+    {others.length>0&&<div style={{fontSize:11,color:"#16a34a",fontWeight:700,background:"white",borderRadius:20,padding:"2px 8px",boxShadow:"0 1px 4px rgba(0,0,0,.1)"}}>{others.length} online</div>}
+  </div>);
+}
+
 // ── BACKUP BANNER ─────────────────────────────────────────────────
 function BackupBanner({lastExportAt,onBackup}) {
   const [dismissed,setDismissed]=useState(false);
@@ -3635,9 +3908,17 @@ function BackupBanner({lastExportAt,onBackup}) {
 
 export default function App() {
   const [page,setPage]=useState(()=>sessionStorage.getItem("gjPage")||"library");
+  // Redirect if current page not allowed for role
+  useEffect(()=>{
+    if(role&&!can(role,page)){
+      const allowed=["library","team","training","teamplaner","turnier","kasse","settings"].find(p=>can(role,p));
+      if(allowed) setPage(allowed);
+    }
+  },[role,page]);
   useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
   const [pendingSetup,setPendingSetup]=useState(null);
-  const { user, login, logout } = useFirebaseAuth();
+  const { user, login, logout, onlineUsers } = useFirebaseAuth();
+  const { role, allUsers, setUserRole } = useRole(user);
   const [exercises,  setExercises,  er]=useCloudStorage("exercises",  [], user);
   const [players,    setPlayers,    pr]=useCloudStorage("players",    [], user);
   const [coaches,    setCoaches,    cr]=useCloudStorage("coaches",    [], user);
@@ -3648,7 +3929,11 @@ export default function App() {
   const [lastExportAt,setLastExportAt]=useStorage("lastExportAt","");
   const [customCats, setCustomCats    ]=useStorage("customCats", []);
   const [teamsets,   setTeamsets        ]=useStorage("teamsets",   []);
-  const saveTSets=x=>setTeamsets(upsert(x));
+  const saveTSets=x=>{
+    setTeamsets(upsert(x));
+    const name=typeof x==="object"&&!Array.isArray(x)?x.name||"Aufstellung":"Aufstellung";
+    logActivity(user,"teams_saved",name);
+  };
   // Sync CATS global whenever customCats changes
   useEffect(()=>{
     const merged={...BUILTIN_CATS};
@@ -3670,10 +3955,10 @@ export default function App() {
   const mergeArr=(inc)=>prev=>{ const m=Object.fromEntries(prev.map(e=>[e.id,e]));inc?.forEach(i=>{if(!m[i.id])m[i.id]=i;});return Object.values(m); };
   const upsert=(x)=>prev=>prev.find(e=>e.id===x.id)?prev.map(e=>e.id===x.id?x:e):[...prev,x];
 
-  const saveEx=x=>{ setExercises(upsert(x));toast('Übung gespeichert'); };
-  const savePl=x=>{ setPlayers(upsert(x));toast('Spieler gespeichert'); };
-  const saveCo=x=>{ setCoaches(upsert(x));toast('Trainer gespeichert'); };
-  const saveSe=x=>{ setSessions(upsert(x));toast('Training gespeichert'); };
+  const saveEx=x=>{ setExercises(upsert(x));logActivity(user,"exercise_saved",x.title||"");toast('Übung gespeichert'); };
+  const savePl=x=>{ setPlayers(upsert(x));logActivity(user,"player_saved",x.name||"");toast('Spieler gespeichert'); };
+  const saveCo=x=>{ setCoaches(upsert(x));logActivity(user,"coach_saved",x.name||"");toast('Trainer gespeichert'); };
+  const saveSe=x=>{ setSessions(upsert(x));logActivity(user,"session_saved",x.date||"");toast('Training gespeichert'); };
   const saveTo=x=>{ setTournaments(upsert(x)); };
   const saveKa=x=>{ setKassenbuch(upsert(x)); };
 
@@ -3698,6 +3983,16 @@ export default function App() {
   };
   // Auth still loading
   if(user===undefined||!er||!pr||!cr||!sr||!tr||!kr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
+  // Role still loading
+  if(user&&role===null) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⏳</div><div style={{fontWeight:700}}>Lade Berechtigungen...</div></div></div>;
+  // Pending - waiting for admin approval
+  if(user&&role==="pending") return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,flexDirection:"column",gap:16,padding:24}}>
+    <div style={{fontSize:56}}>⏳</div>
+    <div style={{fontWeight:900,fontSize:22,color:C.text}}>Zugriff ausstehend</div>
+    <div style={{color:C.muted,fontSize:14,textAlign:"center",maxWidth:280}}>Dein Konto wurde registriert. Ein Admin muss dir erst Zugriff gewähren.</div>
+    <div style={{padding:"10px 16px",borderRadius:10,background:"#f8fafc",border:`1px solid ${C.border}`,fontSize:13,color:C.muted}}>Angemeldet als: {user.displayName||user.email}</div>
+    <button onClick={logout} style={{padding:"8px 20px",borderRadius:10,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:14}}>Abmelden</button>
+  </div>);
   // Not logged in - show login screen
   if(!user) return(<div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,flexDirection:"column",gap:20,padding:24}}>
     <div style={{fontSize:56}}>⚽</div>
@@ -3712,15 +4007,16 @@ export default function App() {
   return(<div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:C.bg,minHeight:"100vh"}}>
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
-    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length}}/>
+    <PresenceBadge onlineUsers={onlineUsers} currentUser={user}/>
+    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length,role}}/>
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{const i=exercises.find(e=>e.id===id);setExercises(prev=>prev.filter(e=>e.id!==id));showUndo("Übung",i,()=>setExercises(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast}/>}
-      {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={savePl} onDeletePlayer={id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}} onSaveCoach={saveCo} onDeleteCoach={id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}} toast={toast} onAddToTraining={({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}}/>}
-      {page==="teamplaner"&&<TeamplanerPage players={players} teamsets={teamsets} onSaveTeamset={saveTSets} onDeleteTeamset={id=>{const i=teamsets.find(t=>t.id===id);setTeamsets(prev=>prev.filter(t=>t.id!==id));showUndo("Team-Aufstellung",i,()=>setTeamsets(prev=>[i,...prev]));}} toast={toast}/>}
+      {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={can(role,"editAnything")?savePl:null} onDeletePlayer={can(role,"editAnything")?id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}:null} onSaveCoach={can(role,"editAnything")?saveCo:null} onDeleteCoach={can(role,"editAnything")?id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}:null} toast={toast} showStrength={can(role,"seeStrength")} readOnly={!can(role,"editAnything")} onAddToTraining={can(role,"editAnything")?({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}:null}/>}
+      {page==="teamplaner"&&<TeamplanerPage players={players} teamsets={teamsets} onSaveTeamset={can(role,"editAnything")?saveTSets:null} onDeleteTeamset={can(role,"editAnything")?id=>{const i=teamsets.find(t=>t.id===id);setTeamsets(prev=>prev.filter(t=>t.id!==id));showUndo("Team-Aufstellung",i,()=>setTeamsets(prev=>[i,...prev]));}:null} readOnly={!can(role,"editAnything")} showStrength={can(role,"seeStrength")} toast={toast}/>}
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} />}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
-      {page==="kasse"    &&<KassePage    kassenbuch={kassenbuch} onSave={saveKa} onDelete={id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}} toast={toast}/>}
-      {page==="settings" &&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup}/>}
+      {page==="kasse"    &&can(role,"kasse")&&<KassePage kassenbuch={kassenbuch} onSave={can(role,"editKasse")?saveKa:null} onDelete={can(role,"editKasse")?id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}:null} readOnly={!can(role,"editKasse")} toast={toast}/>}
+      {page==="settings" &&can(role,"settings")&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole}/>}
     </main>
     {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
       <span style={{fontSize:13,fontWeight:600,flex:1}}>{undoBuf.label}</span>
