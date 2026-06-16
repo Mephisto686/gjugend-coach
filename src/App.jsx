@@ -3442,7 +3442,7 @@ function KasseForm({entry,onSave,onClose}) {
   </div>);
 }
 
-function KassePage({kassenbuch,onSave,onDelete,toast}) {
+function KassePage({kassenbuch,onSave,onDelete,toast,readOnly=false}) {
   const [modal,setModal]=useState(null);
   const [filter,setFilter]=useState("");
   const sorted=[...kassenbuch].sort((a,b)=>new Date(b.date)-new Date(a.date)||(new Date(b.createdAt)-new Date(a.createdAt)));
@@ -3454,7 +3454,7 @@ function KassePage({kassenbuch,onSave,onDelete,toast}) {
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
       <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Mannschaftskasse</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{kassenbuch.length} Einträge</div></div>
-      <Btn onClick={()=>setModal({type:"form",data:null})}><Plus size={16}/> Eintrag</Btn>
+      {!readOnly&&<Btn onClick={()=>setModal({type:"form",data:null})}><Plus size={16}/> Eintrag</Btn>}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
       <div style={{background:"#dcfce7",borderRadius:12,padding:"16px 18px",border:"1.5px solid #86efac"}}>
@@ -3483,10 +3483,10 @@ function KassePage({kassenbuch,onSave,onDelete,toast}) {
             <div style={{fontSize:12,color:C.muted,marginTop:2}}>{fmtDate(k.date)} · {k.category}</div>
           </div>
           <div style={{fontWeight:900,fontSize:16,color:k.type==="ein"?"#16a34a":"#dc2626",flexShrink:0}}>{k.type==="ein"?"+":"-"}{fmt(k.amount)} €</div>
-          <div style={{display:"flex",gap:4,flexShrink:0}}>
+          {!readOnly&&<div style={{display:"flex",gap:4,flexShrink:0}}>
             <button onClick={()=>setModal({type:"form",data:k})} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4}}><Edit2 size={14}/></button>
             <button onClick={()=>onDelete(k.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button>
-          </div>
+          </div>}
         </div>)}
       </div>}
     {modal?.type==="form"&&<Modal title={modal.data?"Eintrag bearbeiten":"Neuer Eintrag"} onClose={()=>setModal(null)}><KasseForm entry={modal.data} onSave={e=>{onSave(e);setModal(null);toast("Eintrag gespeichert");}} onClose={()=>setModal(null)}/></Modal>}
@@ -4145,8 +4145,12 @@ export default function App() {
   // Redirect if current page not allowed for role
   useEffect(()=>{
     if(role&&!can(role,page)){
-      const allowed=["library","team","training","teamplaner","turnier","kasse","settings"].find(pg=>can(role,pg));
-      if(allowed) setPage(allowed);
+      // trainer and eltern have access to simplified settings
+      const hasAccess=can(role,page)||(page==="settings"&&(role==="trainer"||role==="eltern"));
+      if(!hasAccess){
+        const allowed=["library","team","training","teamplaner","turnier","kasse","settings"].find(pg=>can(role,pg)||(pg==="settings"&&(role==="trainer"||role==="eltern")));
+        if(allowed) setPage(allowed);
+      }
     }
   },[role,page]);
   const [exercises,  setExercises,  er]=useCloudStorage("exercises",  [], user);
@@ -4172,7 +4176,7 @@ export default function App() {
     Object.assign(CATS,merged);
   },[customCats]);
   const {toast,Toasts}=useToast();
-  const doFullBackup=async()=>{await dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast);setLastExportAt(new Date().toISOString());};
+  const doFullBackup=async()=>{await dlJson({version:APP_VERSION,exportDate:new Date().toISOString(),type:"full",exercises,players,coaches,sessions,tournaments,kassenbuch,teamsets,customCats},`GJugend_Backup_alle-Daten_${todayISO()}.json`,toast);setLastExportAt(new Date().toISOString());};
   const [undoBuf,setUndoBuf]=useState(null);
   function showUndo(label,item,restoreFn){
     if(undoBuf?.t)clearTimeout(undoBuf.t);
@@ -4201,6 +4205,8 @@ export default function App() {
       if(data.sessions)setSessions(mergeArr(data.sessions));
       if(data.tournaments)setTournaments(mergeArr(data.tournaments));
       if(data.kassenbuch)setKassenbuch(mergeArr(data.kassenbuch));
+      if(data.teamsets)setTeamsets(mergeArr(data.teamsets));
+      if(data.customCats)setCustomCats(data.customCats);
     } else if(mode==='replace'){
       if(data.exercises)setExercises(normExCats(data.exercises));
       if(data.players)setPlayers(data.players);
@@ -4208,6 +4214,8 @@ export default function App() {
       if(data.sessions)setSessions(data.sessions);
       if(data.tournaments)setTournaments(data.tournaments);
       if(data.kassenbuch)setKassenbuch(data.kassenbuch);
+      if(data.teamsets)setTeamsets(data.teamsets);
+      if(data.customCats)setCustomCats(data.customCats);
     } else if(mode==='merge_players') setPlayers(mergeArr(data.players));
     else if(mode==='replace_players') setPlayers(data.players||[]);
   };
