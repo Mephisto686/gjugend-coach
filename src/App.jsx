@@ -131,6 +131,28 @@ function useRole(user) {
 }
 
 
+
+// ── PERSONAL SETTINGS ─────────────────────────────────────────────
+function usePersonalSettings(userId) {
+  const key = userId ? `personal_${userId}` : "personal_guest";
+  const load = () => { try { return JSON.parse(localStorage.getItem(key)||"{}"); } catch{return {};} };
+  const [prefs, setPrefsRaw] = useState(load);
+
+  useEffect(()=>{ if(userId) setPrefsRaw(load()); },[userId]);
+
+  const setPrefs = (update) => {
+    setPrefsRaw(prev => {
+      const next = {...prev,...(typeof update==="function"?update(prev):update)};
+      localStorage.setItem(key, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // Apply dark mode whenever prefs change
+  useEffect(()=>{ applyTheme(prefs.darkMode||false); },[prefs.darkMode]);
+
+  return [prefs, setPrefs];
+}
 // ── PRESENCE ──────────────────────────────────────────────────────
 async function setPresence(user, online) {
   if(!fbDb||!user) return;
@@ -183,7 +205,18 @@ const STR = {
 };
 const ROLES = {head:"Cheftrainer",assistant:"Co-Trainer",helper:"Helfer"};
 const TCOLORS = ["#ef4444","#3b82f6","#22c55e","#f59e0b","#8b5cf6","#ec4899","#06b6d4","#f97316"];
-const C = {nav:"#0f2419",primary:"#166534",accent:"#22c55e",accentL:"#dcfce7",bg:"#f0f4f0",card:"#fff",border:"#e2e8f0",text:"#1e293b",muted:"#64748b"};
+// ── THEME ─────────────────────────────────────────────────────────
+const THEMES = {
+  light: {nav:"#0f2419",primary:"#166534",accent:"#22c55e",accentL:"#dcfce7",bg:"#f0f4f0",card:"#fff",border:"#e2e8f0",text:"#1e293b",muted:"#64748b"},
+  dark:  {nav:"#0a1a10",primary:"#22c55e",accent:"#4ade80",accentL:"#14532d",bg:"#0f172a",card:"#1e293b",border:"#334155",text:"#f1f5f9",muted:"#94a3b8"},
+};
+// C is set dynamically - default light until theme loads
+let C = {...THEMES.light};
+function applyTheme(dark) {
+  Object.assign(C, dark ? THEMES.dark : THEMES.light);
+  document.body.style.background = C.bg;
+  document.body.style.colorScheme = dark ? "dark" : "light";
+}
 
 // ── UTILITIES ─────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2);
@@ -3610,7 +3643,7 @@ function ActivityLog() {
   </div>);
 }
 
-function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup,role,allUsers,setUserRole}) {
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup,role,allUsers,setUserRole,prefs={},onPrefChange}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));
     const t=d.type||"unknown";
@@ -3626,8 +3659,10 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
   const Sec=({title,ch})=><div style={{marginBottom:28}}><h2 style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:14,paddingBottom:8,borderBottom:`2px solid ${C.accentL}`}}>{title}</h2>{ch}</div>;
   return(<div>
     <div style={{marginBottom:16}}><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Einstellungen</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>G-Jugend Coach · v{APP_VERSION}</div></div>
-    {/* Tabs */}
-    {(()=>{
+    {/* Simplified settings for trainer/eltern */}
+    {(role==="trainer"||role==="eltern")&&<SimpleSettings role={role} apiKey={apiKey} onSaveApiKey={onSaveApiKey} prefs={prefs} onPrefChange={onPrefChange} firebaseUser={firebaseUser} onLogout={onLogout}/>}
+    {/* Full settings for admin only */}
+    {role==="admin"&&(()=>{
       const [stab,setStab]=useState("general");
       const stb=(k,l)=><button onClick={()=>setStab(k)} style={{padding:"7px 16px",borderRadius:7,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:stab===k?C.primary:"transparent",color:stab===k?"white":C.muted}}>{l}</button>;
       return(<div>
@@ -3660,6 +3695,13 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
           </div>
         </div>}
         {stab==="general"&&<div>
+    {/* Dark Mode toggle for admin too */}
+    <div style={{marginBottom:16,padding:"12px 16px",background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div><div style={{fontWeight:600,fontSize:14,color:C.text}}>🌙 Dark Mode</div><div style={{fontSize:12,color:C.muted}}>Dunkles Design (nur dieses Gerät)</div></div>
+      <button onClick={()=>onPrefChange(!(prefs.darkMode||false))} style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:prefs.darkMode?C.primary:"#cbd5e1",position:"relative",transition:"background .2s",flexShrink:0}}>
+        <div style={{width:20,height:20,borderRadius:"50%",background:"white",position:"absolute",top:3,left:prefs.darkMode?25:3,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.3)"}}/>
+      </button>
+    </div>
     {/* Firebase user info */}
     {firebaseUser&&<div style={{marginBottom:16,padding:"12px 14px",background:"#f0fdf4",borderRadius:12,border:"1.5px solid #bbf7d0",display:"flex",alignItems:"center",gap:12}}>
       {firebaseUser.photoURL&&<img src={firebaseUser.photoURL} width={36} height={36} style={{borderRadius:"50%"}} alt=""/>}
@@ -3708,6 +3750,66 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
         </div>}
       </div>);
     })()}
+  </div>);
+}
+
+// ── SIMPLE SETTINGS (Trainer/Eltern) ──────────────────────────────
+function SimpleSettings({role,apiKey,onSaveApiKey,prefs,onPrefChange,firebaseUser,onLogout}) {
+  const [apiInput,setApiInput]=useState(apiKey||"");
+  const [saved,setSaved]=useState(false);
+
+  const saveKey=()=>{onSaveApiKey(apiInput);setSaved(true);setTimeout(()=>setSaved(false),2000);};
+
+  return(<div style={{display:"flex",flexDirection:"column",gap:16}}>
+    {/* Profile */}
+    <div style={{padding:"14px 16px",background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`}}>
+      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:12}}>👤 Profil</div>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        {firebaseUser?.photoURL
+          ?<img src={firebaseUser.photoURL} width={44} height={44} style={{borderRadius:"50%"}}/>
+          :<div style={{width:44,height:44,borderRadius:"50%",background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:800,color:C.primary}}>{(firebaseUser?.displayName||"?")[0]}</div>}
+        <div>
+          <div style={{fontWeight:700,fontSize:15,color:C.text}}>{firebaseUser?.displayName||firebaseUser?.email}</div>
+          <div style={{fontSize:12,color:C.muted}}>{firebaseUser?.email}</div>
+          <div style={{fontSize:11,marginTop:2,padding:"1px 8px",borderRadius:20,background:USER_ROLES[role]?.bg,color:USER_ROLES[role]?.color,fontWeight:700,display:"inline-block"}}>{USER_ROLES[role]?.emoji} {USER_ROLES[role]?.label}</div>
+        </div>
+      </div>
+    </div>
+
+    {/* Dark Mode */}
+    <div style={{padding:"14px 16px",background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`}}>
+      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:12}}>🎨 Darstellung</div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div>
+          <div style={{fontWeight:600,fontSize:14,color:C.text}}>🌙 Dark Mode</div>
+          <div style={{fontSize:12,color:C.muted}}>Dunkles Design</div>
+        </div>
+        <button onClick={()=>onPrefChange(!(prefs.darkMode||false))}
+          style={{width:48,height:26,borderRadius:13,border:"none",cursor:"pointer",background:prefs.darkMode?C.primary:"#cbd5e1",position:"relative",transition:"background .2s",flexShrink:0}}>
+          <div style={{width:20,height:20,borderRadius:"50%",background:"white",position:"absolute",top:3,left:prefs.darkMode?25:3,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.3)"}}/>
+        </button>
+      </div>
+    </div>
+
+    {/* API Key - only for trainer */}
+    {role==="trainer"&&<div style={{padding:"14px 16px",background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`}}>
+      <div style={{fontSize:12,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:12}}>🔑 KI API-Key</div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Für KI-Trainingspläne (OpenAI). Wird nur auf diesem Gerät gespeichert.</div>
+      <div style={{display:"flex",gap:8}}>
+        <input value={apiInput} onChange={e=>setApiInput(e.target.value)} type="password" placeholder="sk-..."
+          style={{flex:1,padding:"9px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:13,color:C.text,background:C.bg,outline:"none",fontFamily:"inherit"}}/>
+        <button onClick={saveKey} style={{padding:"9px 16px",borderRadius:8,border:"none",background:saved?"#22c55e":C.primary,color:"white",fontWeight:700,cursor:"pointer",fontSize:13,fontFamily:"inherit",flexShrink:0}}>
+          {saved?"✓ OK":"Speichern"}
+        </button>
+      </div>
+    </div>}
+
+    {/* Abmelden */}
+    <div style={{padding:"14px 16px",background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`}}>
+      <button onClick={onLogout} style={{width:"100%",padding:"10px 0",borderRadius:8,border:"1px solid #fca5a5",background:"#fff5f5",color:"#ef4444",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>
+        🔓 Abmelden
+      </button>
+    </div>
   </div>);
 }
 
@@ -3780,7 +3882,7 @@ function BirthdayBanner({players}) {
 
 function Nav({page,setPage,counts}) {
   const allItems=[{key:"library",icon:BookOpen,label:"Bibliothek",count:counts.exercises},{key:"team",icon:Users,label:"Team",count:counts.players},{key:"training",icon:CalendarDays,label:"Training",count:counts.sessions},{key:"teamplaner",icon:Shuffle,label:"Teams",count:counts.teamsets},{key:"turnier",icon:Trophy,label:"Turnier",count:counts.tournaments},{key:"kasse",icon:Wallet,label:"Kasse"},{key:"settings",icon:Settings,label:"Einstellungen"}];
-  const items=allItems.filter(i=>can(counts.role,i.key));
+  const items=allItems.filter(i=>can(counts.role,i.key)||(i.key==="settings"&&(counts.role==="trainer"||counts.role==="eltern")));
   return(<>
     <style>{`.gn{position:fixed;left:0;top:0;bottom:0;width:200px;background:${C.nav};display:flex;flex-direction:column;z-index:100;padding:0 12px 20px}.gm{display:flex;margin-left:200px;padding:28px;max-width:1100px}.gb{display:none;position:fixed;bottom:0;left:0;right:0;background:${C.nav};z-index:100;border-top:1px solid rgba(255,255,255,.1)}@media(max-width:640px){.gn{display:none}.gb{display:flex}.gm{margin-left:0!important;padding:16px;padding-bottom:80px}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     <div className="gn">
@@ -4031,10 +4133,15 @@ function BackupBanner({lastExportAt,onBackup}) {
 
 export default function App() {
   const [page,setPage]=useState(()=>sessionStorage.getItem("gjPage")||"library");
+  const [darkMode,setDarkMode]=useState(()=>{try{const p=JSON.parse(localStorage.getItem("personal_guest")||"{}");return p.darkMode||false;}catch{return false;}});
   useEffect(()=>sessionStorage.setItem("gjPage",page),[page]);
   const [pendingSetup,setPendingSetup]=useState(null);
   const { user, login, loginEmail, registerEmail, resetPassword, logout, onlineUsers } = useFirebaseAuth();
   const { role, allUsers, setUserRole } = useRole(user);
+  const [prefs, setPrefs] = usePersonalSettings(user?.uid);
+  const toggleDark = (val) => { setPrefs({darkMode:val}); setDarkMode(val); applyTheme(val); };
+  // Apply default page from prefs
+  useEffect(()=>{ if(prefs.defaultPage&&!sessionStorage.getItem("gjPage")) setPage(prefs.defaultPage); },[prefs.defaultPage]);
   // Redirect if current page not allowed for role
   useEffect(()=>{
     if(role&&!can(role,page)){
@@ -4130,7 +4237,7 @@ export default function App() {
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} />}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
       {page==="kasse"    &&can(role,"kasse")&&<KassePage kassenbuch={kassenbuch} onSave={can(role,"editKasse")?saveKa:null} onDelete={can(role,"editKasse")?id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}:null} readOnly={!can(role,"editKasse")} toast={toast}/>}
-      {page==="settings" &&can(role,"settings")&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole}/>}
+      {(can(role,"settings")||role==="trainer"||role==="eltern")&&page==="settings"&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole} prefs={prefs} onPrefChange={toggleDark}/>}
     </main>
     {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
       <span style={{fontSize:13,fontWeight:600,flex:1}}>{undoBuf.label}</span>
