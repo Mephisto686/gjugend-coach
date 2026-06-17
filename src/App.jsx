@@ -2878,18 +2878,20 @@ function TodosTab({data,onSave,toast,user}) {
       <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTodo()} placeholder="Neues To Do..." style={{flex:1,padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",outline:"none",background:C.card,color:C.text}}/>
       <button onClick={addTodo} style={{padding:"10px 16px",borderRadius:10,border:"none",background:C.primary,color:"white",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+</button>
     </div>
-    {open.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,marginBottom:6}}>
-      <button onClick={()=>toggle(t.id)} style={{width:22,height:22,borderRadius:6,border:`2px solid ${C.border}`,background:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:C.primary}}>　</button>
-      <span style={{flex:1,fontSize:14,color:C.text}}>{t.text}</span>
-      {t.createdBy&&<span style={{fontSize:11,color:C.muted}}>{t.createdBy}</span>}
-      <button onClick={()=>del(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:2}}><Trash2 size={14}/></button>
+    {open.map(t=><div key={t.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,marginBottom:6,overflow:"hidden"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px"}}>
+        <button onClick={()=>toggle(t.id)} style={{width:26,height:26,borderRadius:8,border:`2px solid ${C.border}`,background:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}/>
+        <span style={{flex:1,fontSize:14,color:C.text}}>{t.text}</span>
+        <button onClick={()=>del(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={16}/></button>
+      </div>
+      {t.createdBy&&<div style={{fontSize:11,color:C.muted,padding:"0 14px 8px",borderTop:`1px solid ${C.border}33`,paddingTop:4}}>👤 {t.createdBy}</div>}
     </div>)}
     {done.length>0&&<div style={{marginTop:12}}>
       <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Erledigt ({done.length})</div>
-      {done.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,marginBottom:4,opacity:.6}}>
-        <button onClick={()=>toggle(t.id)} style={{width:22,height:22,borderRadius:6,border:`2px solid ${C.primary}`,background:C.primary,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"white",fontSize:13}}>✓</button>
+      {done.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,marginBottom:4}}>
+        <button onClick={()=>toggle(t.id)} style={{width:26,height:26,borderRadius:8,border:`2px solid ${C.primary}`,background:C.primary,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"white",fontSize:14}}>✓</button>
         <span style={{flex:1,fontSize:13,color:C.muted,textDecoration:"line-through"}}>{t.text}</span>
-        <button onClick={()=>del(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:2}}><Trash2 size={13}/></button>
+        <button onClick={()=>del(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={15}/></button>
       </div>)}
     </div>}
   </div>);
@@ -2914,25 +2916,27 @@ function MeetingCard({m,onEdit,onDel,onSave}) {
   const [open,setOpen]=useState(false);
   const toggleAgenda=idx=>onSave(prev=>{const meetings=(prev.meetings||[]).map(mt=>{if(mt.id!==m.id)return mt;const ag=[...(mt.agenda||[])];ag[idx]={...ag[idx],done:!ag[idx].done};return{...mt,agenda:ag};});return{...prev,meetings};});
   return(<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,marginBottom:10,overflow:"hidden"}}>
-    <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px"}}>
+    <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",cursor:"pointer"}}>
       <div style={{width:40,height:40,borderRadius:10,background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📅</div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontWeight:800,fontSize:15,color:C.text}}>{m.title||"Trainertreff"}</div>
         <div style={{fontSize:12,color:C.muted,marginTop:2}}>{m.date?new Date(m.date+"T12:00").toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long",year:"numeric"}):""}{m.location?` · 📍 ${m.location}`:""} · {(m.agenda||[]).length} Punkte</div>
       </div>
-      <div style={{display:"flex",gap:4}}>
-        <button onClick={onEdit} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4}}><Edit2 size={14}/></button>
-        <button onClick={onDel} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button>
-        <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4}}>{open?"▲":"▼"}</button>
+      <div style={{display:"flex",gap:4}} onClick={e=>e.stopPropagation()}>
+        <button onClick={onEdit} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:6}}><Edit2 size={16}/></button>
+        <button onClick={onDel} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:6}}><Trash2 size={16}/></button>
+        <span style={{color:C.muted,padding:6,fontSize:14}}>{open?"▲":"▼"}</span>
       </div>
     </div>
     {open&&(m.agenda||[]).length>0&&<div style={{borderTop:`1px solid ${C.border}`,padding:"8px 16px 12px"}}>
       <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>Agenda</div>
-      {(m.agenda||[]).map((ag,i)=><div key={i} onClick={()=>toggleAgenda(i)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"6px 0",borderBottom:i<m.agenda.length-1?`1px solid ${C.border}33`:"none",cursor:"pointer"}}>
-        <div style={{width:22,height:22,borderRadius:"50%",background:ag.done?C.primary:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:ag.done?"white":C.primary,flexShrink:0,marginTop:1}}>{ag.done?"✓":i+1}</div>
-        <div style={{flex:1}}>
-          <div style={{fontSize:13,fontWeight:600,color:ag.done?C.muted:C.text,textDecoration:ag.done?"line-through":"none"}}>{ag.text}</div>
-          {ag.sub?.length>0&&ag.sub.map((s,j)=><div key={j} style={{fontSize:12,color:ag.done?C.muted:C.muted,marginLeft:8,marginTop:2}}>↳ {s}</div>)}
+      {(m.agenda||[]).map((ag,i)=><div key={i} style={{borderBottom:i<m.agenda.length-1?`1px solid ${C.border}33`:"none"}}>
+        <div onClick={()=>toggleAgenda(i)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 0",cursor:"pointer"}}>
+          <div style={{width:26,height:26,borderRadius:"50%",background:ag.done?C.primary:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:ag.done?"white":C.primary,flexShrink:0}}>{ag.done?"✓":i+1}</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:600,color:ag.done?C.muted:C.text,textDecoration:ag.done?"line-through":"none"}}>{ag.text}</div>
+            {ag.sub?.length>0&&ag.sub.map((s,j)=><div key={j} style={{fontSize:12,color:C.muted,marginLeft:8,marginTop:3,textDecoration:ag.done?"line-through":"none"}}>↳ {s}</div>)}
+          </div>
         </div>
       </div>)}
       {m.createdBy&&<div style={{fontSize:11,color:C.muted,marginTop:8}}>Erstellt von {m.createdBy}</div>}
@@ -2969,8 +2973,8 @@ function MeetingForm({m,onSave,onClose}) {
           </div>
           <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:16}}>{i+1}.</span>
           <input value={ag.text} onChange={e=>setAgenda(i,"text",e.target.value)} placeholder="Agendapunkt..." style={{flex:1,padding:"6px 10px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,fontFamily:"inherit",outline:"none",background:"white",color:C.text}}/>
-          <button onClick={()=>addSub(i)} title="Unterpunkt" style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:4,fontSize:12}}>↳</button>
-          <button onClick={()=>delAgenda(i)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={13}/></button>
+          <button onClick={()=>addSub(i)} title="Unterpunkt" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted,fontSize:13,fontFamily:"inherit"}}>↳ Sub</button>
+          <button onClick={()=>delAgenda(i)} style={{padding:"6px 8px",borderRadius:6,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={15}/></button>
         </div>
         {(ag.sub||[]).map((s,j)=><div key={j} style={{display:"flex",gap:6,alignItems:"center",marginLeft:24,marginTop:4}}>
           <span style={{color:C.muted,fontSize:12}}>↳</span>
