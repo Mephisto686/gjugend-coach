@@ -154,7 +154,7 @@ function useRole(user) {
   };
 
   const pendingCount=allUsers.filter(u=>u.role==="pending").length;
-  return {role, allUsers, setUserRole, pendingCount};
+  return {role, allUsers, setUserRole, setUserName, deleteUser, pendingCount};
 }
 
 
@@ -2960,12 +2960,13 @@ function MeetingsTab({meetings,onSave,onDelete,currentUser,toast,showUndo,readOn
   const sorted=[...meetings].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
   const del=m=>{onDelete(m.id);showUndo&&showUndo("Trainertreff",m,()=>onSave(m));};
   const save=m=>{onSave(m);setModal(null);toast("Trainertreff gespeichert");};
+  const saveSilent=m=>{onSave(m);};
   return(<div>
     <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-      {!readOnly&&<Btn onClick={()=>setModal({id:uid(),title:"Trainertreff",date:todayISO(),location:"",agenda:[],createdBy:currentUser?.displayName||currentUser?.email||"",createdAt:now()})}><Plus size={14}/> Neuer Trainertreff</Btn>}
+      {!readOnly&&<Btn onClick={()=>setModal({id:uid(),title:"Trainertreff",date:todayISO(),location:"",agenda:[],createdBy:currentUser?.uid||"",createdByName:currentUser?.displayName||currentUser?.email||"",createdAt:now()})}><Plus size={14}/> Neuer Trainertreff</Btn>}
     </div>
     {sorted.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.muted}}><div style={{fontSize:36,marginBottom:8}}>📅</div><div style={{fontWeight:700}}>Noch keine Trainertreff-Einträge</div></div>}
-    {sorted.map(m=><MeetingCard key={m.id} m={m} onEdit={()=>setModal(m)} onDel={()=>del(m)} onSave={save} readOnly={readOnly}/>)}
+    {sorted.map(m=><MeetingCard key={m.id} m={m} onEdit={()=>setModal({...m,createdByName:m.createdByName||(m.createdBy&&!m.createdBy.includes("@")&&m.createdBy.length>20?currentUser?.displayName||currentUser?.email||m.createdBy:m.createdBy)})} onDel={()=>del(m)} onSave={saveSilent} readOnly={readOnly}/>)}
     {modal&&<Modal title={meetings.find(x=>x.id===modal.id)?"Trainertreff bearbeiten":"Neuer Trainertreff"} onClose={()=>setModal(null)} wide><MeetingForm m={modal} onSave={save} onClose={()=>setModal(null)}/></Modal>}
   </div>);
 }
@@ -2999,7 +3000,7 @@ function MeetingCard({m,onEdit,onDel,onSave,readOnly}) {
           </div>
         </div>
       </div>)}
-      {m.createdBy&&<div style={{fontSize:11,color:C.muted,marginTop:8}}>Erstellt von {m.createdBy}</div>}
+      {(m.createdByName||m.createdBy)&&<div style={{fontSize:11,color:C.muted,marginTop:8}}>Erstellt von {m.createdByName||m.createdBy}</div>}
     </div>}
   </div>);
 }
@@ -4214,7 +4215,7 @@ function Nav({page,setPage,counts}) {
     {showMore&&<div style={{position:"fixed",bottom:60,left:0,right:0,background:"white",borderRadius:"16px 16px 0 0",padding:"12px 16px 16px",zIndex:201,boxShadow:"0 -4px 24px rgba(0,0,0,.15)"}}>
       <div style={{width:36,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
       <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:10}}>Weitere Bereiche</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(moreItems.length,2)},1fr)`,gap:8}}>
         {moreItems.map(({key,icon:Icon,label,count,alert})=>{
           const active=page===key;
           return(<button key={key} onClick={()=>{setPage(key);setShowMore(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"14px 8px",borderRadius:12,border:`1.5px solid ${active?C.primary:C.border}`,background:active?C.accentL:"white",cursor:"pointer",fontFamily:"inherit",position:"relative"}}>
