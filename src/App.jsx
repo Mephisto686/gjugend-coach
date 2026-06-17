@@ -2954,6 +2954,7 @@ function TodoForm({todo,coaches,currentUser,onSave,onClose}) {
 }
 
 // ─── MEETINGS TAB ────────────────────────────────────────────────
+const normalizeAgenda=agenda=>(Array.isArray(agenda)?agenda:[]).map(ag=>typeof ag==="string"?{text:ag,done:false,sub:[]}:(ag&&typeof ag==="object"?{sub:[],...ag}:{text:"",done:false,sub:[]}));
 function MeetingsTab({meetings,onSave,onDelete,currentUser,toast,showUndo,readOnly}) {
   const [modal,setModal]=useState(null);
   const sorted=[...meetings].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
@@ -2971,14 +2972,15 @@ function MeetingsTab({meetings,onSave,onDelete,currentUser,toast,showUndo,readOn
 
 function MeetingCard({m,onEdit,onDel,onSave,readOnly}) {
   const [open,setOpen]=useState(false);
-  const toggleAgenda=idx=>{const ag=[...(m.agenda||[])];ag[idx]={...ag[idx],done:!ag[idx].done};onSave({...m,agenda:ag});};
-  const doneCount=(m.agenda||[]).filter(a=>a.done).length;
+  const agenda=normalizeAgenda(m.agenda);
+  const toggleAgenda=idx=>{const ag=[...agenda];ag[idx]={...ag[idx],done:!ag[idx].done};onSave({...m,agenda:ag});};
+  const doneCount=agenda.filter(a=>a.done).length;
   return(<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,marginBottom:10,overflow:"hidden"}}>
     <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",cursor:"pointer"}}>
       <div style={{width:40,height:40,borderRadius:10,background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📅</div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontWeight:800,fontSize:15,color:C.text}}>{m.title||"Trainertreff"}</div>
-        <div style={{fontSize:12,color:C.muted,marginTop:2}}>{m.date?new Date(m.date+"T12:00").toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long",year:"numeric"}):""}{m.location?` · 📍 ${m.location}`:""}{(m.agenda||[]).length>0?` · ${doneCount}/${(m.agenda||[]).length} Punkte`:""}</div>
+        <div style={{fontSize:12,color:C.muted,marginTop:2}}>{m.date?new Date(m.date+"T12:00").toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long",year:"numeric"}):""}{m.location?` · 📍 ${m.location}`:""}{agenda.length>0?` · ${doneCount}/${agenda.length} Punkte`:""}</div>
       </div>
       <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
         {!readOnly&&<button onClick={onEdit} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:6}}><Edit2 size={16}/></button>}
@@ -2987,13 +2989,13 @@ function MeetingCard({m,onEdit,onDel,onSave,readOnly}) {
       </div>
     </div>
     {open&&<div style={{borderTop:`1px solid ${C.border}`,padding:"8px 16px 12px"}}>
-      {(m.agenda||[]).length===0&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic",padding:"8px 0"}}>Keine Agendapunkte</div>}
-      {(m.agenda||[]).map((ag,i)=><div key={i} style={{borderBottom:i<m.agenda.length-1?`1px solid ${C.border}33`:"none"}}>
+      {agenda.length===0&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic",padding:"8px 0"}}>Keine Agendapunkte</div>}
+      {agenda.map((ag,i)=><div key={i} style={{borderBottom:i<agenda.length-1?`1px solid ${C.border}33`:"none"}}>
         <div onClick={e=>{e.stopPropagation();if(!readOnly)toggleAgenda(i);}} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 0",cursor:readOnly?"default":"pointer"}}>
           <div style={{width:26,height:26,borderRadius:"50%",background:ag.done?C.primary:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:ag.done?"white":C.primary,flexShrink:0,transition:"all .15s"}}>{ag.done?"✓":i+1}</div>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600,color:ag.done?C.muted:C.text,textDecoration:ag.done?"line-through":"none"}}>{ag.text}</div>
-            {ag.sub?.length>0&&ag.sub.map((s,j)=><div key={j} style={{fontSize:12,color:C.muted,marginLeft:8,marginTop:3,textDecoration:ag.done?"line-through":"none"}}>↳ {s}</div>)}
+            {Array.isArray(ag.sub)&&ag.sub.length>0&&ag.sub.map((s,j)=><div key={j} style={{fontSize:12,color:C.muted,marginLeft:8,marginTop:3,textDecoration:ag.done?"line-through":"none"}}>↳ {s}</div>)}
           </div>
         </div>
       </div>)}
@@ -3003,15 +3005,15 @@ function MeetingCard({m,onEdit,onDel,onSave,readOnly}) {
 }
 
 function MeetingForm({m,onSave,onClose}) {
-  const [form,setForm]=useState({...m,agenda:[...(m.agenda||[])]});
+  const [form,setForm]=useState({...m,agenda:normalizeAgenda(m.agenda)});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const addAgenda=()=>setForm(f=>({...f,agenda:[...f.agenda,{text:"",done:false,sub:[]}]}));
   const setAgenda=(i,k,v)=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],[k]:v};return{...f,agenda:ag};});
   const delAgenda=i=>setForm(f=>({...f,agenda:f.agenda.filter((_,j)=>j!==i)}));
   const moveAgenda=(i,dir)=>setForm(f=>{const ag=[...f.agenda];const j=i+dir;if(j<0||j>=ag.length)return f;[ag[i],ag[j]]=[ag[j],ag[i]];return{...f,agenda:ag};});
-  const addSub=i=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],sub:[...(ag[i].sub||[]),""]};return{...f,agenda:ag};});
-  const setSub=(i,j,v)=>setForm(f=>{const ag=[...f.agenda];const sub=[...(ag[i].sub||[])];sub[j]=v;ag[i]={...ag[i],sub};return{...f,agenda:ag};});
-  const delSub=(i,j)=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],sub:(ag[i].sub||[]).filter((_,k)=>k!==j)};return{...f,agenda:ag};});
+  const addSub=i=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],sub:[...(Array.isArray(ag[i].sub)?ag[i].sub:[]),""]};return{...f,agenda:ag};});
+  const setSub=(i,j,v)=>setForm(f=>{const ag=[...f.agenda];const sub=[...(Array.isArray(ag[i].sub)?ag[i].sub:[])];sub[j]=v;ag[i]={...ag[i],sub};return{...f,agenda:ag};});
+  const delSub=(i,j)=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],sub:(Array.isArray(ag[i].sub)?ag[i].sub:[]).filter((_,k)=>k!==j)};return{...f,agenda:ag};});
   return(<div>
     <Inp label="Titel" value={form.title} onChange={e=>set("title",e.target.value)}/>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
@@ -3024,7 +3026,7 @@ function MeetingForm({m,onSave,onClose}) {
         <Btn sm onClick={addAgenda}><Plus size={13}/> Punkt</Btn>
       </div>
       {form.agenda.map((ag,i)=><div key={i} style={{marginBottom:8,padding:"10px 12px",background:"#f8fafc",borderRadius:8,border:`1px solid ${C.border}`}}>
-        <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:ag.sub?.length>0?8:0}}>
+        <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:Array.isArray(ag.sub)&&ag.sub.length>0?8:0}}>
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             <button onClick={()=>moveAgenda(i,-1)} disabled={i===0} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:"1px 4px",fontSize:10,lineHeight:1}}>▲</button>
             <button onClick={()=>moveAgenda(i,1)} disabled={i===form.agenda.length-1} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:"1px 4px",fontSize:10,lineHeight:1}}>▼</button>
@@ -3034,7 +3036,7 @@ function MeetingForm({m,onSave,onClose}) {
           <button onClick={()=>addSub(i)} title="Unterpunkt hinzufügen" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted,fontSize:13,fontFamily:"inherit"}}>↳ Sub</button>
           <button onClick={()=>delAgenda(i)} style={{padding:"6px 8px",borderRadius:6,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={15}/></button>
         </div>
-        {(ag.sub||[]).map((s,j)=><div key={j} style={{display:"flex",gap:6,alignItems:"center",marginLeft:24,marginTop:4}}>
+        {(Array.isArray(ag.sub)?ag.sub:[]).map((s,j)=><div key={j} style={{display:"flex",gap:6,alignItems:"center",marginLeft:24,marginTop:4}}>
           <span style={{color:C.muted,fontSize:12}}>↳</span>
           <input value={s} onChange={e=>setSub(i,j,e.target.value)} placeholder="Unterpunkt..." style={{flex:1,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:12,fontFamily:"inherit",outline:"none",background:"white",color:C.text}}/>
           <button onClick={()=>delSub(i,j)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:2}}><Trash2 size={12}/></button>
