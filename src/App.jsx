@@ -1022,7 +1022,7 @@ function ExDetail({exercise:ex,onEdit,onSave,onDelete,onClose}) {
 }
 
 // ── LIBRARY PAGE ──────────────────────────────────────────────────
-function LibraryPage({exercises,onSave,onDelete,apiKey,toast}) {
+function LibraryPage({exercises,onSave,onDelete,apiKey,toast,onlineUsers,currentUser}) {
   const [search,setSearch]=useState("");
   const [fCat,setFCat]=useState("");
   const [fTag,setFTag]=useState("");
@@ -1104,7 +1104,7 @@ ${PDF_SCRIPT}</body></html>`;
   const allTags=[...new Set(exercises.flatMap(e=>e.tags||[]))].sort();
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Übungsbibliothek</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{exercises.length} Übungen</div></div>
+      <PageHeader title="Übungsbibliothek" sub={`${exercises.length} Übungen`} onlineUsers={onlineUsers} currentUser={currentUser}/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         {selMode
           ?<><Btn sm variant="secondary" onClick={()=>setSelIds(filtered.map(e=>e.id))}>Alle</Btn>
@@ -1503,7 +1503,7 @@ function AddToSessionModal({playerIds,sessions,players,onSaveSession,onClose,toa
   </div>);
 }
 
-function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeletePlayer,onSaveCoach,onDeleteCoach,toast,onAddToTraining,showStrength=true,readOnly=false}) {
+function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeletePlayer,onSaveCoach,onDeleteCoach,toast,onAddToTraining,showStrength=true,readOnly=false,onlineUsers,currentUser}) {
   const [tab,setTab]=useState("players");
   const [modal,setModal]=useState(null);
   const [del,setDel]=useState(null);
@@ -1541,7 +1541,7 @@ function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeleteP
   const totalSel=selPlayers.length+selCoaches.length;
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Team</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{players.filter(p=>p.active).length} aktive Spieler · {coaches.filter(c=>c.active).length} Trainer</div></div>
+      <PageHeader title="Team" sub={`${players.filter(p=>p.active).length} aktive Spieler · ${coaches.filter(c=>c.active).length} Trainer`} onlineUsers={onlineUsers} currentUser={currentUser}/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         {tab==="players"&&<><Btn onClick={()=>playerImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Spieler importieren</Btn><input ref={playerImportRef} type="file" accept=".json,.csv" onChange={async e=>{const f=e.target.files?.[0];if(!f)return;if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));p.forEach(x=>onSavePlayer(x));toast(`${p.length} Spieler importiert`);} else handleImportPlayers(e); e.target.value="";}} style={{display:"none"}}/></>}
         {tab==="coaches"&&<><Btn onClick={()=>coachImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Trainer importieren</Btn><input ref={coachImportRef} type="file" accept=".json" onChange={handleImportCoaches} style={{display:"none"}}/></>}
@@ -2520,7 +2520,7 @@ function TeamDetailView({ts,onEdit,onClose,toast}) {
   </div>);
 }
 
-function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast,readOnly=false,showStrength=true}) {
+function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast,readOnly=false,showStrength=true,onlineUsers,currentUser}) {
   const [view,setView]=useState("list");
   const [editTs,setEditTs]=useState(null);
   const [detailTs,setDetailTs]=useState(null);
@@ -2575,8 +2575,7 @@ function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast,re
 
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Teams</h1>
-      <div style={{fontSize:13,color:C.muted,marginTop:2}}>{sorted.length} gespeicherte Aufstellungen</div></div>
+      <PageHeader title="Teams" sub={`${sorted.length} gespeicherte Aufstellungen`} onlineUsers={onlineUsers} currentUser={currentUser}/>
       {!readOnly&&onSaveTeamset&&<Btn onClick={openNew}><Plus size={15}/> Neue Aufstellung</Btn>}
     </div>
 
@@ -2852,12 +2851,12 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
 
 // ── ORGA PAGE ─────────────────────────────────────────────────────
 // ── ORGA PAGE ─────────────────────────────────────────────────────
-function OrgaPage({todos,onSaveTodo,onDeleteTodo,meetings,onSaveMeeting,onDeleteMeeting,coaches,currentUser,toast,showUndo,readOnly}) {
+function OrgaPage({todos,onSaveTodo,onDeleteTodo,meetings,onSaveMeeting,onDeleteMeeting,coaches,currentUser,toast,showUndo,readOnly,onlineUsers}) {
   const [tab,setTab]=useState("todos");
   const openCount=(todos||[]).filter(t=>!t.done).length;
   const tb=(k,l,n)=><button onClick={()=>setTab(k)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}{n>0&&<span style={{fontSize:11,background:tab===k?"rgba(255,255,255,.3)":C.accentL,color:tab===k?"white":C.primary,borderRadius:20,padding:"0 6px"}}>{n}</span>}</button>;
   return(<div>
-    <div style={{marginBottom:16}}><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Organisation</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>To Dos & Trainertreff</div></div>
+    <PageHeader title="Organisation" sub="To Dos &amp; Trainertreff" onlineUsers={onlineUsers} currentUser={currentUser}/>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20}}>
       {tb("todos","✅ To Dos",openCount)}
       {tb("meetings","📅 Trainertreff",(meetings||[]).length)}
@@ -3052,7 +3051,7 @@ function MeetingForm({m,onSave,onClose}) {
 }
 
 // ── TRAINING PAGE ─────────────────────────────────────────────────
-function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise,pendingSetup,onClearPendingSetup}) {
+function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDeleteSession,apiKey,toast,onSaveExercise,pendingSetup,onClearPendingSetup,onlineUsers,currentUser}) {
   const [tab,setTab]=useState("history");
   const [modal,setModal]=useState(()=>pendingSetup?{type:"setup",setup:pendingSetup}:null);
   useEffect(()=>{if(pendingSetup){setModal({type:"setup",setup:pendingSetup});onClearPendingSetup?.();}},[]);
@@ -3060,7 +3059,7 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
   const gP=id=>players.find(p=>p.id===id),gC=id=>coaches.find(c=>c.id===id),gE=id=>exercises.find(e=>e.id===id);
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Training</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{sessions.length} Einheiten</div></div>
+      <PageHeader title="Training" sub={`${sessions.length} Einheiten`} onlineUsers={onlineUsers} currentUser={currentUser}/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <Btn onClick={()=>setModal({type:"notfall"})} style={{background:"#dc2626",color:"white"}} sm><AlertTriangle size={14}/> SOS</Btn>
         <Btn onClick={()=>setModal({type:"setup"})}><CalendarDays size={16}/> Training planen</Btn>
@@ -3630,13 +3629,13 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
   </div>);
 }
 
-function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[]}) {
+function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[],onlineUsers,currentUser}) {
   const [modal,setModal]=useState(null);
   const [open,setOpen]=useState(null);
   if(open){const t=tournaments.find(x=>x.id===open);if(!t){setOpen(null);return null;}return<TournamentDetail tournament={t} onUpdate={onSaveTournament} onBack={()=>setOpen(null)} coaches={coaches}/>;}
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Turnier</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{tournaments.length} Turniere</div></div>
+      <PageHeader title="Turnier" sub={`${tournaments.length} Turniere`} onlineUsers={onlineUsers} currentUser={currentUser}/>
       <Btn onClick={()=>setModal({type:"create"})}><Plus size={16}/> Neues Turnier</Btn>
     </div>
     {tournaments.length===0?<Empty icon="🏆" title="Noch kein Turnier" sub="Plane ein Rundenturnier – intern oder mit externen Teams." onAdd={()=>setModal({type:"create"})} addLabel="Turnier erstellen"/>:
@@ -3690,7 +3689,7 @@ function KasseForm({entry,onSave,onClose}) {
   </div>);
 }
 
-function KassePage({kassenbuch,onSave,onDelete,toast,readOnly=false}) {
+function KassePage({kassenbuch,onSave,onDelete,toast,readOnly=false,onlineUsers,currentUser}) {
   const [modal,setModal]=useState(null);
   const [filter,setFilter]=useState("");
   const sorted=[...kassenbuch].sort((a,b)=>new Date(b.date)-new Date(a.date)||(new Date(b.createdAt)-new Date(a.createdAt)));
@@ -3701,7 +3700,7 @@ function KassePage({kassenbuch,onSave,onDelete,toast,readOnly=false}) {
   const fmt=n=>n.toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <div><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Mannschaftskasse</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>{kassenbuch.length} Einträge</div></div>
+      <PageHeader title="Mannschaftskasse" sub={`${kassenbuch.length} Einträge`} onlineUsers={onlineUsers} currentUser={currentUser}/>
       {!readOnly&&<Btn onClick={()=>setModal({type:"form",data:null})}><Plus size={16}/> Eintrag</Btn>}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
@@ -3935,7 +3934,7 @@ function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch
   const EC=({icon,title,desc,sub,fn})=><div style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><div style={{fontWeight:700,fontSize:14,color:C.text}}>{icon} {title}</div><div style={{fontSize:12,color:C.muted,marginTop:2}}>{desc}</div>{sub&&<div style={{fontSize:11,color:"#94a3b8",marginTop:1}}>{sub}</div>}</div><Btn sm onClick={fn}><Download size={13}/> Export</Btn></div>;
   const Sec=({title,ch})=><div style={{marginBottom:28}}><h2 style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:14,paddingBottom:8,borderBottom:`2px solid ${C.accentL}`}}>{title}</h2>{ch}</div>;
   return(<div>
-    <div style={{marginBottom:16}}><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Einstellungen</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>G-Jugend Coach · v{APP_VERSION}</div></div>
+    <PageHeader title="Einstellungen" sub={`G-Jugend Coach · v${APP_VERSION}`} onlineUsers={onlineUsers} currentUser={firebaseUser}/>
     {/* Simplified settings for trainer/eltern */}
     {(role==="trainer"||role==="eltern")&&<SimpleSettings role={role} apiKey={apiKey} onSaveApiKey={onSaveApiKey} prefs={prefs} onPrefChange={onPrefChange} firebaseUser={firebaseUser} onLogout={onLogout}/>}
     {/* Full settings for admin only */}
@@ -4338,34 +4337,44 @@ function useCloudStorage(key, def, user) {
 }
 
 // ── PRESENCE BADGE ────────────────────────────────────────────────
-function PresenceBadge({onlineUsers, currentUser}) {
+function PageHeader({title, sub, onlineUsers, currentUser}) {
   const [showList,setShowList]=useState(false);
-  if(!onlineUsers||onlineUsers.length===0) return null;
-  const others=onlineUsers.filter(u=>u.uid!==currentUser?.uid);
-  return(<div style={{position:"fixed",top:8,right:8,zIndex:9980}}>
-    <div style={{display:"flex",gap:4,alignItems:"center",cursor:"pointer"}} onClick={()=>setShowList(s=>!s)}>
-      {onlineUsers.map(u=>(
-        <div key={u.uid} title={`${u.name||u.uid.slice(0,8)}${u.uid===currentUser?.uid?" (du)":""}`}
-          style={{position:"relative",width:30,height:30,borderRadius:"50%",overflow:"hidden",border:`2px solid ${u.uid===currentUser?.uid?"#16a34a":"#f59e0b"}`,background:"#e2e8f0",flexShrink:0}}>
-          {u.photo
-            ?<img src={u.photo} width={30} height={30} style={{objectFit:"cover"}}/>
-            :<div style={{width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:800,color:"#64748b"}}>{(u.name||"?")[0].toUpperCase()}</div>}
-          <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:"#22c55e",border:"1.5px solid white"}}/>
+  const users=onlineUsers||[];
+  return(
+    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
+      <div>
+        <h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>{title}</h1>
+        {sub&&<div style={{fontSize:13,color:C.muted,marginTop:2}}>{sub}</div>}
+      </div>
+      {users.length>0&&<div style={{position:"relative",flexShrink:0,paddingTop:2}}>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,cursor:"pointer"}} onClick={()=>setShowList(s=>!s)}>
+          <div style={{display:"flex"}}>
+            {users.map((u,i)=>(
+              <div key={u.uid} style={{position:"relative",width:30,height:30,borderRadius:"50%",overflow:"hidden",border:`2px solid white`,background:"#e2e8f0",flexShrink:0,marginLeft:i===0?0:-8,zIndex:users.length-i}}>
+                {u.photo?<img src={u.photo} width={30} height={30} style={{objectFit:"cover"}}/>
+                  :<div style={{width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:"#475569",background:u.uid===currentUser?.uid?"#dcfce7":"#fef9c3"}}>{(u.name||"?")[0].toUpperCase()}</div>}
+                <div style={{position:"absolute",bottom:0,right:0,width:8,height:8,borderRadius:"50%",background:"#22c55e",border:"1.5px solid white"}}/>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:10,color:"#16a34a",fontWeight:700}}>{users.length} online</div>
         </div>
-      ))}
-      <div style={{fontSize:11,color:"#16a34a",fontWeight:700,background:"white",borderRadius:20,padding:"2px 8px",boxShadow:"0 1px 4px rgba(0,0,0,.1)"}}>{onlineUsers.length} online</div>
+        {showList&&<>
+          <div style={{position:"fixed",inset:0,zIndex:9990}} onClick={()=>setShowList(false)}/>
+          <div style={{position:"absolute",top:52,right:0,background:"white",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,.15)",padding:"8px 0",minWidth:160,zIndex:9991}}>
+            <div style={{fontSize:10,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,padding:"4px 12px 6px"}}>Gerade online</div>
+            {users.map(u=><div key={u.uid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px"}}>
+              {u.photo?<img src={u.photo} width={22} height={22} style={{borderRadius:"50%"}}/>
+                :<div style={{width:22,height:22,borderRadius:"50%",background:"#dcfce7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#16a34a"}}>{(u.name||"?")[0].toUpperCase()}</div>}
+              <span style={{fontSize:13,fontWeight:600,color:C.text,flex:1}}>{u.name?.split(" ")[0]||u.uid.slice(0,8)}</span>
+              {u.uid===currentUser?.uid&&<span style={{fontSize:10,color:C.muted}}>(du)</span>}
+              <div style={{width:7,height:7,borderRadius:"50%",background:"#22c55e"}}/>
+            </div>)}
+          </div>
+        </>}
+      </div>}
     </div>
-    {showList&&<div style={{position:"absolute",top:38,right:0,background:"white",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,.15)",padding:"8px 0",minWidth:180,zIndex:9999}}>
-      <div style={{fontSize:10,fontWeight:800,color:"#64748b",textTransform:"uppercase",letterSpacing:.6,padding:"4px 12px 6px"}}>Aktive Nutzer</div>
-      {onlineUsers.map(u=><div key={u.uid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px"}}>
-        {u.photo?<img src={u.photo} width={22} height={22} style={{borderRadius:"50%"}}/>
-          :<div style={{width:22,height:22,borderRadius:"50%",background:"#dcfce7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#16a34a"}}>{(u.name||"?")[0].toUpperCase()}</div>}
-        <span style={{fontSize:13,fontWeight:600,color:"#1e293b"}}>{u.name?.split(" ")[0]||u.uid.slice(0,8)}</span>
-        {u.uid===currentUser?.uid&&<span style={{fontSize:10,color:"#64748b"}}>(du)</span>}
-        <div style={{width:7,height:7,borderRadius:"50%",background:"#22c55e",marginLeft:"auto"}}/>
-      </div>)}
-    </div>}
-  </div>);
+  );
 }
 
 // ── AUTH SCREEN ───────────────────────────────────────────────────
@@ -4599,16 +4608,15 @@ export default function App() {
   return(<div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:C.bg,minHeight:"100vh"}}>
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
-    <PresenceBadge onlineUsers={onlineUsers} currentUser={user}/>
     <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length,openTodos:todos.filter(t=>!t.done).length||undefined,role,pendingCount:role==="admin"?pendingCount:0}}/>
     <main className="gm" style={{display:"block"}}>
-      {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{const i=exercises.find(e=>e.id===id);setExercises(prev=>prev.filter(e=>e.id!==id));showUndo("Übung",i,()=>setExercises(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast}/>}
-      {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={can(role,"editAnything")?savePl:null} onDeletePlayer={can(role,"editAnything")?id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}:null} onSaveCoach={can(role,"editAnything")?saveCo:null} onDeleteCoach={can(role,"editAnything")?id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}:null} toast={toast} showStrength={can(role,"seeStrength")} readOnly={!can(role,"editAnything")} onAddToTraining={can(role,"editAnything")?({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}:null}/>}
-      {page==="orga"&&can(role,"orga")&&<OrgaPage todos={todos} onSaveTodo={saveTodo} onDeleteTodo={id=>{const i=todos.find(t=>t.id===id);setTodos(prev=>prev.filter(t=>t.id!==id));showUndo("Task",i,()=>setTodos(prev=>[i,...prev]));}} meetings={meetings} onSaveMeeting={saveMeeting} onDeleteMeeting={id=>{const i=meetings.find(m=>m.id===id);setMeetings(prev=>prev.filter(m=>m.id!==id));showUndo("Trainertreff",i,()=>setMeetings(prev=>[i,...prev]));}} coaches={coaches} currentUser={user} toast={toast} showUndo={showUndo} readOnly={!can(role,"editAnything")}/>}
-      {page==="teamplaner"&&<TeamplanerPage players={players} teamsets={teamsets} onSaveTeamset={can(role,"editAnything")?saveTSets:null} onDeleteTeamset={can(role,"editAnything")?id=>{const i=teamsets.find(t=>t.id===id);setTeamsets(prev=>prev.filter(t=>t.id!==id));showUndo("Team-Aufstellung",i,()=>setTeamsets(prev=>[i,...prev]));}:null} readOnly={!can(role,"editAnything")} showStrength={can(role,"seeStrength")} toast={toast}/>}
-      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} />}
-      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
-      {page==="kasse"    &&can(role,"kasse")&&<KassePage kassenbuch={kassenbuch} onSave={can(role,"editKasse")?saveKa:null} onDelete={can(role,"editKasse")?id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}:null} readOnly={!can(role,"editKasse")} toast={toast}/>}
+      {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{const i=exercises.find(e=>e.id===id);setExercises(prev=>prev.filter(e=>e.id!==id));showUndo("Übung",i,()=>setExercises(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onlineUsers={onlineUsers} currentUser={user}/>}
+      {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={can(role,"editAnything")?savePl:null} onDeletePlayer={can(role,"editAnything")?id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}:null} onSaveCoach={can(role,"editAnything")?saveCo:null} onDeleteCoach={can(role,"editAnything")?id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}:null} toast={toast} showStrength={can(role,"seeStrength")} readOnly={!can(role,"editAnything")} onAddToTraining={can(role,"editAnything")?({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}:null} onlineUsers={onlineUsers} currentUser={user}/>}
+      {page==="orga"&&can(role,"orga")&&<OrgaPage todos={todos} onSaveTodo={saveTodo} onDeleteTodo={id=>{const i=todos.find(t=>t.id===id);setTodos(prev=>prev.filter(t=>t.id!==id));showUndo("Task",i,()=>setTodos(prev=>[i,...prev]));}} meetings={meetings} onSaveMeeting={saveMeeting} onDeleteMeeting={id=>{const i=meetings.find(m=>m.id===id);setMeetings(prev=>prev.filter(m=>m.id!==id));showUndo("Trainertreff",i,()=>setMeetings(prev=>[i,...prev]));}} coaches={coaches} currentUser={user} toast={toast} showUndo={showUndo} readOnly={!can(role,"editAnything")} onlineUsers={onlineUsers}/>}
+      {page==="teamplaner"&&<TeamplanerPage players={players} teamsets={teamsets} onSaveTeamset={can(role,"editAnything")?saveTSets:null} onDeleteTeamset={can(role,"editAnything")?id=>{const i=teamsets.find(t=>t.id===id);setTeamsets(prev=>prev.filter(t=>t.id!==id));showUndo("Team-Aufstellung",i,()=>setTeamsets(prev=>[i,...prev]));}:null} readOnly={!can(role,"editAnything")} showStrength={can(role,"seeStrength")} toast={toast} onlineUsers={onlineUsers} currentUser={user}/>}
+      {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} onlineUsers={onlineUsers} currentUser={user}/>}
+      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches} onlineUsers={onlineUsers} currentUser={user}/>}
+      {page==="kasse"    &&can(role,"kasse")&&<KassePage kassenbuch={kassenbuch} onSave={can(role,"editKasse")?saveKa:null} onDelete={can(role,"editKasse")?id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}:null} readOnly={!can(role,"editKasse")} toast={toast} onlineUsers={onlineUsers} currentUser={user}/>}
       {(can(role,"settings")||role==="trainer"||role==="eltern")&&page==="settings"&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole} setUserName={setUserName} deleteUser={deleteUser} prefs={prefs} onPrefChange={toggleDark}/>}
     </main>
     {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
