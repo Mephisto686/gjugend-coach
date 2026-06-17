@@ -232,6 +232,20 @@ const STR = {
 };
 const ROLES = {head:"Cheftrainer",assistant:"Co-Trainer",helper:"Helfer"};
 const TCOLORS = ["#ef4444","#3b82f6","#22c55e","#f59e0b","#8b5cf6","#ec4899","#06b6d4","#f97316"];
+// ── ERROR DISPLAY ─────────────────────────────────────────────────
+if(typeof window!=="undefined"){
+  window.onerror=(msg,src,line,col,err)=>{
+    document.body.innerHTML=`<div style="padding:24px;font-family:monospace;background:#fee2e2;min-height:100vh">
+      <div style="font-weight:900;font-size:18px;color:#dc2626;margin-bottom:12px">⚠️ App-Fehler</div>
+      <div style="font-size:14px;color:#7f1d1d;margin-bottom:8px">${msg}</div>
+      <div style="font-size:12px;color:#991b1b">${src} Zeile ${line}:${col}</div>
+      <div style="font-size:11px;color:#7f1d1d;margin-top:8px;white-space:pre-wrap">${err?.stack||""}</div>
+      <button onclick="location.reload()" style="margin-top:16px;padding:8px 16px;background:#dc2626;color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700">Neu laden</button>
+    </div>`;
+    return true;
+  };
+}
+
 // ── THEME ─────────────────────────────────────────────────────────
 const THEMES = {
   light: {nav:"#0f2419",primary:"#166534",accent:"#22c55e",accentL:"#dcfce7",bg:"#f0f4f0",card:"#fff",border:"#e2e8f0",text:"#1e293b",muted:"#64748b"},
