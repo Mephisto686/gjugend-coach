@@ -2869,9 +2869,9 @@ function OrgaPage({orga,onSaveOrga,toast,user}) {
 function TodosTab({data,onSave,toast,user}) {
   const [text,setText]=useState("");
   const todos=data.todos||[];
-  const addTodo=()=>{if(!text.trim())return;onSave({...data,todos:[...todos,{id:uid(),text:text.trim(),done:false,createdBy:user?.displayName||"",createdAt:now()}]});setText("");};
-  const toggle=id=>onSave({...data,todos:todos.map(t=>t.id===id?{...t,done:!t.done}:t)});
-  const del=id=>onSave({...data,todos:todos.filter(t=>t.id!==id)});
+  const addTodo=()=>{if(!text.trim())return;const t={id:uid(),text:text.trim(),done:false,createdBy:user?.displayName||"",createdAt:now()};onSave(prev=>({...prev,todos:[...(prev.todos||[]),t]}));setText("");};
+  const toggle=id=>onSave(prev=>({...prev,todos:(prev.todos||[]).map(t=>t.id===id?{...t,done:!t.done}:t)}));
+  const del=id=>onSave(prev=>({...prev,todos:(prev.todos||[]).filter(t=>t.id!==id)}));
   const open=todos.filter(t=>!t.done),done=todos.filter(t=>t.done);
   return(<div>
     <div style={{display:"flex",gap:8,marginBottom:16}}>
@@ -2898,8 +2898,8 @@ function TodosTab({data,onSave,toast,user}) {
 function MeetingsTab({data,onSave,toast,user}) {
   const [modal,setModal]=useState(null);
   const meetings=(data.meetings||[]).sort((a,b)=>b.date?.localeCompare(a.date||"")||0);
-  const del=id=>onSave({...data,meetings:(data.meetings||[]).filter(m=>m.id!==id)});
-  const save=m=>{const ms=(data.meetings||[]);const idx=ms.findIndex(x=>x.id===m.id);const next=idx>=0?ms.map(x=>x.id===m.id?m:x):[...ms,m];onSave({...data,meetings:next});setModal(null);toast("Trainertreff gespeichert");};
+  const del=id=>onSave(prev=>({...prev,meetings:(prev.meetings||[]).filter(m=>m.id!==id)}));
+  const save=m=>{onSave(prev=>{const ms=(prev.meetings||[]);const idx=ms.findIndex(x=>x.id===m.id);const next=idx>=0?ms.map(x=>x.id===m.id?m:x):[...ms,m];return{...prev,meetings:next};});setModal(null);toast("Trainertreff gespeichert");};
   return(<div>
     <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
       <Btn onClick={()=>setModal({id:uid(),title:"Trainertreff",date:todayISO(),location:"",agenda:[],createdBy:user?.displayName||"",createdAt:now()})}><Plus size={14}/> Neuer Trainertreff</Btn>
@@ -2912,7 +2912,7 @@ function MeetingsTab({data,onSave,toast,user}) {
 
 function MeetingCard({m,onEdit,onDel,onSave}) {
   const [open,setOpen]=useState(false);
-  const toggleAgenda=idx=>{const ag=[...(m.agenda||[])];ag[idx]={...ag[idx],done:!ag[idx].done};onSave({...m,agenda:ag});};
+  const toggleAgenda=idx=>onSave(prev=>{const meetings=(prev.meetings||[]).map(mt=>{if(mt.id!==m.id)return mt;const ag=[...(mt.agenda||[])];ag[idx]={...ag[idx],done:!ag[idx].done};return{...mt,agenda:ag};});return{...prev,meetings};});
   return(<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,marginBottom:10,overflow:"hidden"}}>
     <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px"}}>
       <div style={{width:40,height:40,borderRadius:10,background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📅</div>
@@ -4116,15 +4116,15 @@ function Nav({page,setPage,counts}) {
   const navBtn=(item)=>{
     const active=page===item.key;
     const Icon=item.icon;
-    return(<button key={item.key} onClick={()=>{setPage(item.key);setShowMore(false);}} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 4px",border:"none",cursor:"pointer",background:"transparent",color:active?"#4ade80":"rgba(255,255,255,.5)",fontFamily:"inherit",position:"relative"}}>
-      <Icon size={18} strokeWidth={active?2.5:1.8}/>
-      {item.alert&&<span style={{position:"absolute",top:6,left:"50%",transform:"translateX(6px)",background:"#ef4444",width:7,height:7,borderRadius:"50%",display:"block"}}/>}
-      <span style={{fontSize:9,fontWeight:700}}>{item.label}</span>
+    return(<button key={item.key} onClick={()=>{setPage(item.key);setShowMore(false);}} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"10px 4px",border:"none",cursor:"pointer",background:"transparent",color:active?"#4ade80":"rgba(255,255,255,.5)",fontFamily:"inherit",position:"relative"}}>
+      <Icon size={22} strokeWidth={active?2.5:1.8}/>
+      {item.alert&&<span style={{position:"absolute",top:8,left:"50%",transform:"translateX(8px)",background:"#ef4444",width:7,height:7,borderRadius:"50%",display:"block"}}/>}
+      <span style={{fontSize:10,fontWeight:700}}>{item.label}</span>
     </button>);
   };
 
   return(<>
-    <style>{`.gn{position:fixed;left:0;top:0;bottom:0;width:200px;background:${C.nav};display:flex;flex-direction:column;z-index:100;padding:0 12px 20px}.gm{display:flex;margin-left:200px;padding:28px;max-width:1100px}.gb{display:none;position:fixed;bottom:0;left:0;right:0;background:${C.nav};z-index:100;border-top:1px solid rgba(255,255,255,.1)}@media(max-width:640px){.gn{display:none}.gb{display:flex}.gm{margin-left:0!important;padding:16px;padding-bottom:80px}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    <style>{`.gn{position:fixed;left:0;top:0;bottom:0;width:200px;background:${C.nav};display:flex;flex-direction:column;z-index:100;padding:0 12px 20px}.gm{display:flex;margin-left:200px;padding:28px;max-width:1100px}.gb{display:none;position:fixed;bottom:0;left:0;right:0;background:${C.nav};z-index:100;border-top:1px solid rgba(255,255,255,.1)}@media(max-width:640px){.gn{display:none}.gb{display:flex;height:68px}.gm{margin-left:0!important;padding:16px;padding-bottom:88px}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     {/* Desktop sidebar */}
     <div className="gn">
       <div style={{padding:"24px 8px 20px",borderBottom:"1px solid rgba(255,255,255,.1)",marginBottom:12}}>
@@ -4138,10 +4138,10 @@ function Nav({page,setPage,counts}) {
     <div className="gb">
       {mainItems.map(navBtn)}
       {/* Mehr button */}
-      {moreItems.length>0&&<button onClick={()=>setShowMore(s=>!s)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"8px 4px",border:"none",cursor:"pointer",background:"transparent",color:moreActive||showMore?"#4ade80":"rgba(255,255,255,.5)",fontFamily:"inherit",position:"relative"}}>
-        <MoreHorizontal size={18} strokeWidth={1.8}/>
-        {moreAlert&&!showMore&&<span style={{position:"absolute",top:6,left:"50%",transform:"translateX(6px)",background:"#ef4444",width:7,height:7,borderRadius:"50%",display:"block"}}/>}
-        <span style={{fontSize:9,fontWeight:700}}>Mehr</span>
+      {moreItems.length>0&&<button onClick={()=>setShowMore(s=>!s)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"10px 4px",border:"none",cursor:"pointer",background:"transparent",color:moreActive||showMore?"#4ade80":"rgba(255,255,255,.5)",fontFamily:"inherit",position:"relative"}}>
+        <MoreHorizontal size={22} strokeWidth={1.8}/>
+        {moreAlert&&!showMore&&<span style={{position:"absolute",top:8,left:"50%",transform:"translateX(8px)",background:"#ef4444",width:7,height:7,borderRadius:"50%",display:"block"}}/>}
+        <span style={{fontSize:10,fontWeight:700}}>Mehr</span>
       </button>}
     </div>
     {/* More sheet overlay */}
@@ -4448,7 +4448,7 @@ export default function App() {
   const [tournaments,setTournaments,tr]=useCloudStorage("tournaments",[], user);
   const [kassenbuch, setKassenbuch, kr]=useCloudStorage("kassenbuch", [], user);
   const [orga,       setOrga,       ogr]=useCloudStorage("orga",      {todos:[],meetings:[]}, user);
-  const saveOrga=x=>setOrga(x);
+  const saveOrga=x=>setOrga(typeof x==="function"?x:()=>x);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
   const [lastExportAt,setLastExportAt]=useStorage("lastExportAt","");
   const [customCats, setCustomCats    ]=useCloudStorage("customCats", [], user);
