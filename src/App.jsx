@@ -205,7 +205,7 @@ async function logActivity(user, action, detail="") {
   } catch(e) {}
 }
 
-const APP_VERSION = "3.9.2";
+const APP_VERSION = "3.9.4";
 const BUILTIN_CATS = {
   aufwaermen: { label:"Aufwärmen", emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   uebung:     { label:"Übung",     emoji:"⚽", color:"#2563eb", bg:"#eff6ff", builtin:true },
@@ -2851,88 +2851,146 @@ function TeamEditor({ts,setTs,allPlayers,onSave,onCancel}) {
 }
 
 // ── ORGA PAGE ─────────────────────────────────────────────────────
-function OrgaPage({orga,onSaveOrga,toast,user}) {
+// ── ORGA PAGE ─────────────────────────────────────────────────────
+function OrgaPage({todos,onSaveTodo,onDeleteTodo,meetings,onSaveMeeting,onDeleteMeeting,coaches,currentUser,toast,showUndo,readOnly}) {
   const [tab,setTab]=useState("todos");
-  const data=orga||{todos:[],meetings:[]};
+  const openCount=(todos||[]).filter(t=>!t.done).length;
   const tb=(k,l,n)=><button onClick={()=>setTab(k)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}{n>0&&<span style={{fontSize:11,background:tab===k?"rgba(255,255,255,.3)":C.accentL,color:tab===k?"white":C.primary,borderRadius:20,padding:"0 6px"}}>{n}</span>}</button>;
   return(<div>
     <div style={{marginBottom:16}}><h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>Organisation</h1><div style={{fontSize:13,color:C.muted,marginTop:2}}>To Dos & Trainertreff</div></div>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20}}>
-      {tb("todos","✅ To Dos",(data.todos||[]).filter(t=>!t.done).length)}
-      {tb("meetings","📅 Trainertreff",(data.meetings||[]).length)}
+      {tb("todos","✅ To Dos",openCount)}
+      {tb("meetings","📅 Trainertreff",(meetings||[]).length)}
     </div>
-    {tab==="todos"&&<TodosTab data={data} onSave={onSaveOrga} toast={toast} user={user}/>}
-    {tab==="meetings"&&<MeetingsTab data={data} onSave={onSaveOrga} toast={toast} user={user}/>}
+    {tab==="todos"&&<TodosTab todos={todos||[]} onSave={onSaveTodo} onDelete={onDeleteTodo} coaches={coaches} currentUser={currentUser} toast={toast} showUndo={showUndo} readOnly={readOnly}/>}
+    {tab==="meetings"&&<MeetingsTab meetings={meetings||[]} onSave={onSaveMeeting} onDelete={onDeleteMeeting} currentUser={currentUser} toast={toast} showUndo={showUndo} readOnly={readOnly}/>}
   </div>);
 }
 
-function TodosTab({data,onSave,toast,user}) {
-  const [text,setText]=useState("");
-  const todos=data.todos||[];
-  const addTodo=()=>{if(!text.trim())return;const t={id:uid(),text:text.trim(),done:false,createdBy:user?.displayName||"",createdAt:now()};onSave(prev=>({...prev,todos:[...(prev.todos||[]),t]}));setText("");};
-  const toggle=id=>onSave(prev=>({...prev,todos:(prev.todos||[]).map(t=>t.id===id?{...t,done:!t.done}:t)}));
-  const del=id=>onSave(prev=>({...prev,todos:(prev.todos||[]).filter(t=>t.id!==id)}));
-  const open=todos.filter(t=>!t.done),done=todos.filter(t=>t.done);
-  return(<div>
-    <div style={{display:"flex",gap:8,marginBottom:16}}>
-      <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTodo()} placeholder="Neues To Do..." style={{flex:1,padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",outline:"none",background:C.card,color:C.text}}/>
-      <button onClick={addTodo} style={{padding:"10px 16px",borderRadius:10,border:"none",background:C.primary,color:"white",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+</button>
-    </div>
-    {open.map(t=><div key={t.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${C.border}`,marginBottom:6,overflow:"hidden"}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px"}}>
-        <button onClick={()=>toggle(t.id)} style={{width:26,height:26,borderRadius:8,border:`2px solid ${C.border}`,background:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}/>
-        <span style={{flex:1,fontSize:14,color:C.text}}>{t.text}</span>
-        <button onClick={()=>del(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={16}/></button>
-      </div>
-      {t.createdBy&&<div style={{fontSize:11,color:C.muted,padding:"0 14px 8px",borderTop:`1px solid ${C.border}33`,paddingTop:4}}>👤 {t.createdBy}</div>}
-    </div>)}
-    {done.length>0&&<div style={{marginTop:12}}>
-      <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.5}}>Erledigt ({done.length})</div>
-      {done.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#f8fafc",borderRadius:10,border:`1.5px solid ${C.border}`,marginBottom:4}}>
-        <button onClick={()=>toggle(t.id)} style={{width:26,height:26,borderRadius:8,border:`2px solid ${C.primary}`,background:C.primary,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"white",fontSize:14}}>✓</button>
-        <span style={{flex:1,fontSize:13,color:C.muted,textDecoration:"line-through"}}>{t.text}</span>
-        <button onClick={()=>del(t.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={15}/></button>
-      </div>)}
-    </div>}
-  </div>);
-}
-
-function MeetingsTab({data,onSave,toast,user}) {
+// ─── TODO TAB ────────────────────────────────────────────────────
+function TodosTab({todos,onSave,onDelete,coaches,currentUser,toast,showUndo,readOnly}) {
+  const [quickText,setQuickText]=useState("");
   const [modal,setModal]=useState(null);
-  const meetings=(data.meetings||[]).sort((a,b)=>b.date?.localeCompare(a.date||"")||0);
-  const del=id=>onSave(prev=>({...prev,meetings:(prev.meetings||[]).filter(m=>m.id!==id)}));
-  const save=m=>{onSave(prev=>{const ms=(prev.meetings||[]);const idx=ms.findIndex(x=>x.id===m.id);const next=idx>=0?ms.map(x=>x.id===m.id?m:x):[...ms,m];return{...prev,meetings:next};});setModal(null);toast("Trainertreff gespeichert");};
+  const [filter,setFilter]=useState("open");
+  const todayStr=()=>new Date().toISOString().slice(0,10);
+  const isOverdue=t=>!t.done&&t.due&&t.due<todayStr();
+  const isDueToday=t=>!t.done&&t.due&&t.due===todayStr();
+
+  const addQuick=()=>{
+    if(!quickText.trim())return;
+    const t={id:uid(),task:quickText.trim(),owner:null,due:null,done:false,doneAt:null,createdAt:now(),createdBy:currentUser?.uid||null,createdByName:currentUser?.displayName||currentUser?.email||null,updatedAt:now()};
+    onSave(t);setQuickText("");toast("Task erstellt");
+  };
+  const toggle=t=>onSave({...t,done:!t.done,doneAt:!t.done?now():null,updatedAt:now()});
+  const del=t=>{onDelete(t.id);showUndo&&showUndo("Task",t,()=>onSave(t));};
+
+  const sorted=[...todos].sort((a,b)=>{
+    if(a.done!==b.done)return a.done?1:-1;
+    if(a.due&&b.due)return a.due.localeCompare(b.due);
+    if(a.due)return -1;if(b.due)return 1;return 0;
+  });
+  const filtered=sorted.filter(t=>filter==="all"?true:filter==="done"?t.done:!t.done);
+
+  return(<div>
+    {/* Quick-add */}
+    {!readOnly&&<div style={{display:"flex",gap:8,marginBottom:12}}>
+      <input value={quickText} onChange={e=>setQuickText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addQuick()} placeholder="Schnell-Task eingeben + Enter..." style={{flex:1,padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",outline:"none",background:C.card,color:C.text}}/>
+      <button onClick={addQuick} style={{padding:"10px 14px",borderRadius:10,border:"none",background:C.primary,color:"white",fontWeight:700,cursor:"pointer",fontFamily:"inherit",fontSize:18}}>+</button>
+      <button onClick={()=>setModal({data:null})} style={{padding:"10px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,background:"white",color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700}} title="Mit Details anlegen">⋯</button>
+    </div>}
+    {/* Filter */}
+    <div style={{display:"flex",gap:6,marginBottom:14}}>
+      {[["open","Offen"],["done","Erledigt"],["all","Alle"]].map(([k,l])=>(
+        <button key={k} onClick={()=>setFilter(k)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${filter===k?C.primary:C.border}`,background:filter===k?C.accentL:"white",color:filter===k?C.primary:C.muted,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:13}}>{l}</button>
+      ))}
+    </div>
+    {/* List */}
+    {filtered.length===0&&<div style={{textAlign:"center",padding:"36px 0",color:C.muted}}><div style={{fontSize:32,marginBottom:8}}>{filter==="done"?"🎉":"📭"}</div><div style={{fontWeight:700}}>{filter==="done"?"Noch nichts erledigt":"Keine offenen Tasks"}</div></div>}
+    {filtered.map(t=>(
+      <div key={t.id} onClick={()=>!readOnly&&setModal({data:t})} style={{background:C.card,borderRadius:10,border:`1.5px solid ${isOverdue(t)?"#fca5a5":isDueToday(t)?"#fcd34d":t.done?"#d1fae5":C.border}`,marginBottom:6,overflow:"hidden",cursor:readOnly?"default":"pointer",opacity:t.done?.78:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px"}}>
+          <button onClick={e=>{e.stopPropagation();if(!readOnly)toggle(t);}} style={{width:26,height:26,borderRadius:8,border:`2px solid ${t.done?C.primary:C.border}`,background:t.done?C.primary:"white",cursor:readOnly?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"white",fontSize:14,transition:"all .15s"}}>{t.done?"✓":""}</button>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:600,color:t.done?C.muted:C.text,textDecoration:t.done?"line-through":"none",wordBreak:"break-word"}}>{t.task}</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginTop:t.owner||t.due?4:0}}>
+              {t.owner&&<span style={{fontSize:11,color:C.muted}}>👤 {t.owner}</span>}
+              {t.due&&<span style={{fontSize:11,fontWeight:700,color:isOverdue(t)?"#dc2626":isDueToday(t)?"#d97706":C.muted}}>{isOverdue(t)?"⚠️ ":isDueToday(t)?"📅 ":"🗓 "}{new Date(t.due+"T12:00:00").toLocaleDateString("de-DE")}</span>}
+            </div>
+          </div>
+          {!readOnly&&<button onClick={e=>{e.stopPropagation();del(t);}} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4,flexShrink:0}}><Trash2 size={15}/></button>}
+        </div>
+        {t.createdByName&&<div style={{fontSize:11,color:C.muted,padding:"0 14px 7px",borderTop:`1px solid ${C.border}22`,paddingTop:4}}>👤 Erstellt von {t.createdByName}{t.createdAt?" · "+new Date(t.createdAt).toLocaleDateString("de-DE"):""}</div>}
+      </div>
+    ))}
+    {/* Detail modal */}
+    {modal&&<Modal title={modal.data?"Task bearbeiten":"Neuer Task"} onClose={()=>setModal(null)}>
+      <TodoForm todo={modal.data} coaches={coaches} currentUser={currentUser} onSave={t=>{onSave(t);setModal(null);toast(modal.data?"Task gespeichert":"Task erstellt");}} onClose={()=>setModal(null)}/>
+    </Modal>}
+  </div>);
+}
+
+function TodoForm({todo,coaches,currentUser,onSave,onClose}) {
+  const [task,setTask]=useState(todo?.task||"");
+  const [owner,setOwner]=useState(todo?.owner||"");
+  const [due,setDue]=useState(todo?.due||"");
+  const [ownerOpen,setOwnerOpen]=useState(false);
+  const coachNames=(coaches||[]).map(c=>c.name).filter(Boolean);
+  const suggestions=coachNames.filter(n=>n.toLowerCase().includes(owner.toLowerCase())&&n!==owner);
+  return(<div>
+    <Inp label="Aufgabe *" value={task} onChange={e=>setTask(e.target.value)} placeholder="Was ist zu tun?"/>
+    <div style={{marginBottom:14,position:"relative"}}>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:.6}}>Zuständig</label>
+      <input value={owner} onChange={e=>{setOwner(e.target.value);setOwnerOpen(true);}} onFocus={()=>setOwnerOpen(true)} onBlur={()=>setTimeout(()=>setOwnerOpen(false),150)} placeholder="Name oder frei eingeben" style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:14,fontFamily:"inherit",boxSizing:"border-box",outline:"none"}}/>
+      {ownerOpen&&suggestions.length>0&&<div style={{position:"absolute",top:"100%",left:0,right:0,background:"white",border:`1.5px solid ${C.border}`,borderRadius:8,boxShadow:"0 4px 12px rgba(0,0,0,.12)",zIndex:200,maxHeight:140,overflowY:"auto"}}>
+        {suggestions.map(n=><div key={n} onMouseDown={()=>{setOwner(n);setOwnerOpen(false);}} style={{padding:"9px 14px",cursor:"pointer",fontSize:14,color:C.text}}>👤 {n}</div>)}
+      </div>}
+    </div>
+    <Inp label="Fällig bis" type="date" value={due} onChange={e=>setDue(e.target.value)}/>
+    <div style={{display:"flex",gap:8,marginTop:18}}>
+      <Btn variant="secondary" onClick={onClose}>Abbrechen</Btn>
+      <Btn onClick={()=>{if(!task.trim())return;const n=now();onSave({id:todo?.id||uid(),task:task.trim(),owner:owner.trim()||null,due:due||null,done:todo?.done||false,doneAt:todo?.doneAt||null,createdAt:todo?.createdAt||n,createdBy:todo?.createdBy||currentUser?.uid||null,createdByName:todo?.createdByName||currentUser?.displayName||currentUser?.email||null,updatedAt:n});}}>Speichern</Btn>
+    </div>
+  </div>);
+}
+
+// ─── MEETINGS TAB ────────────────────────────────────────────────
+function MeetingsTab({meetings,onSave,onDelete,currentUser,toast,showUndo,readOnly}) {
+  const [modal,setModal]=useState(null);
+  const sorted=[...meetings].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
+  const del=m=>{onDelete(m.id);showUndo&&showUndo("Trainertreff",m,()=>onSave(m));};
+  const save=m=>{onSave(m);setModal(null);toast("Trainertreff gespeichert");};
   return(<div>
     <div style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
-      <Btn onClick={()=>setModal({id:uid(),title:"Trainertreff",date:todayISO(),location:"",agenda:[],createdBy:user?.displayName||"",createdAt:now()})}><Plus size={14}/> Neuer Trainertreff</Btn>
+      {!readOnly&&<Btn onClick={()=>setModal({id:uid(),title:"Trainertreff",date:todayISO(),location:"",agenda:[],createdBy:currentUser?.displayName||currentUser?.email||"",createdAt:now()})}><Plus size={14}/> Neuer Trainertreff</Btn>}
     </div>
-    {meetings.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.muted}}><div style={{fontSize:36,marginBottom:8}}>📅</div><div style={{fontWeight:700}}>Noch keine Trainertreff-Einträge</div></div>}
-    {meetings.map(m=><MeetingCard key={m.id} m={m} onEdit={()=>setModal(m)} onDel={()=>del(m.id)} onSave={save}/>)}
-    {modal&&<Modal title={modal.id&&(data.meetings||[]).find(x=>x.id===modal.id)?"Trainertreff bearbeiten":"Neuer Trainertreff"} onClose={()=>setModal(null)} wide><MeetingForm m={modal} onSave={save} onClose={()=>setModal(null)}/></Modal>}
+    {sorted.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:C.muted}}><div style={{fontSize:36,marginBottom:8}}>📅</div><div style={{fontWeight:700}}>Noch keine Trainertreff-Einträge</div></div>}
+    {sorted.map(m=><MeetingCard key={m.id} m={m} onEdit={()=>setModal(m)} onDel={()=>del(m)} onSave={save} readOnly={readOnly}/>)}
+    {modal&&<Modal title={meetings.find(x=>x.id===modal.id)?"Trainertreff bearbeiten":"Neuer Trainertreff"} onClose={()=>setModal(null)} wide><MeetingForm m={modal} onSave={save} onClose={()=>setModal(null)}/></Modal>}
   </div>);
 }
 
-function MeetingCard({m,onEdit,onDel,onSave}) {
+function MeetingCard({m,onEdit,onDel,onSave,readOnly}) {
   const [open,setOpen]=useState(false);
-  const toggleAgenda=idx=>onSave(prev=>{const meetings=(prev.meetings||[]).map(mt=>{if(mt.id!==m.id)return mt;const ag=[...(mt.agenda||[])];ag[idx]={...ag[idx],done:!ag[idx].done};return{...mt,agenda:ag};});return{...prev,meetings};});
+  const toggleAgenda=idx=>{const ag=[...(m.agenda||[])];ag[idx]={...ag[idx],done:!ag[idx].done};onSave({...m,agenda:ag});};
+  const doneCount=(m.agenda||[]).filter(a=>a.done).length;
   return(<div style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,marginBottom:10,overflow:"hidden"}}>
     <div onClick={()=>setOpen(o=>!o)} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 16px",cursor:"pointer"}}>
       <div style={{width:40,height:40,borderRadius:10,background:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📅</div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontWeight:800,fontSize:15,color:C.text}}>{m.title||"Trainertreff"}</div>
-        <div style={{fontSize:12,color:C.muted,marginTop:2}}>{m.date?new Date(m.date+"T12:00").toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long",year:"numeric"}):""}{m.location?` · 📍 ${m.location}`:""} · {(m.agenda||[]).length} Punkte</div>
+        <div style={{fontSize:12,color:C.muted,marginTop:2}}>{m.date?new Date(m.date+"T12:00").toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long",year:"numeric"}):""}{m.location?` · 📍 ${m.location}`:""}{(m.agenda||[]).length>0?` · ${doneCount}/${(m.agenda||[]).length} Punkte`:""}</div>
       </div>
-      <div style={{display:"flex",gap:4}} onClick={e=>e.stopPropagation()}>
-        <button onClick={onEdit} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:6}}><Edit2 size={16}/></button>
-        <button onClick={onDel} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:6}}><Trash2 size={16}/></button>
-        <span style={{color:C.muted,padding:6,fontSize:14}}>{open?"▲":"▼"}</span>
+      <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
+        {!readOnly&&<button onClick={onEdit} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,padding:6}}><Edit2 size={16}/></button>}
+        {!readOnly&&<button onClick={onDel} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:6}}><Trash2 size={16}/></button>}
+        <span style={{color:C.muted,padding:6,fontSize:14}} onClick={()=>setOpen(o=>!o)}>{open?"▲":"▼"}</span>
       </div>
     </div>
-    {open&&(m.agenda||[]).length>0&&<div style={{borderTop:`1px solid ${C.border}`,padding:"8px 16px 12px"}}>
-      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.5,marginBottom:8}}>Agenda</div>
+    {open&&<div style={{borderTop:`1px solid ${C.border}`,padding:"8px 16px 12px"}}>
+      {(m.agenda||[]).length===0&&<div style={{fontSize:13,color:C.muted,fontStyle:"italic",padding:"8px 0"}}>Keine Agendapunkte</div>}
       {(m.agenda||[]).map((ag,i)=><div key={i} style={{borderBottom:i<m.agenda.length-1?`1px solid ${C.border}33`:"none"}}>
-        <div onClick={()=>toggleAgenda(i)} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 0",cursor:"pointer"}}>
-          <div style={{width:26,height:26,borderRadius:"50%",background:ag.done?C.primary:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:ag.done?"white":C.primary,flexShrink:0}}>{ag.done?"✓":i+1}</div>
+        <div onClick={e=>{e.stopPropagation();if(!readOnly)toggleAgenda(i);}} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 0",cursor:readOnly?"default":"pointer"}}>
+          <div style={{width:26,height:26,borderRadius:"50%",background:ag.done?C.primary:C.accentL,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:ag.done?"white":C.primary,flexShrink:0,transition:"all .15s"}}>{ag.done?"✓":i+1}</div>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600,color:ag.done?C.muted:C.text,textDecoration:ag.done?"line-through":"none"}}>{ag.text}</div>
             {ag.sub?.length>0&&ag.sub.map((s,j)=><div key={j} style={{fontSize:12,color:C.muted,marginLeft:8,marginTop:3,textDecoration:ag.done?"line-through":"none"}}>↳ {s}</div>)}
@@ -2948,10 +3006,10 @@ function MeetingForm({m,onSave,onClose}) {
   const [form,setForm]=useState({...m,agenda:[...(m.agenda||[])]});
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const addAgenda=()=>setForm(f=>({...f,agenda:[...f.agenda,{text:"",done:false,sub:[]}]}));
-  const setAgenda=(i,k,v)=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],[k]:v};return {...f,agenda:ag};});
+  const setAgenda=(i,k,v)=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],[k]:v};return{...f,agenda:ag};});
   const delAgenda=i=>setForm(f=>({...f,agenda:f.agenda.filter((_,j)=>j!==i)}));
   const moveAgenda=(i,dir)=>setForm(f=>{const ag=[...f.agenda];const j=i+dir;if(j<0||j>=ag.length)return f;[ag[i],ag[j]]=[ag[j],ag[i]];return{...f,agenda:ag};});
-  const addSub=(i)=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],sub:[...(ag[i].sub||[]),""]};return{...f,agenda:ag};});
+  const addSub=i=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],sub:[...(ag[i].sub||[]),""]};return{...f,agenda:ag};});
   const setSub=(i,j,v)=>setForm(f=>{const ag=[...f.agenda];const sub=[...(ag[i].sub||[])];sub[j]=v;ag[i]={...ag[i],sub};return{...f,agenda:ag};});
   const delSub=(i,j)=>setForm(f=>{const ag=[...f.agenda];ag[i]={...ag[i],sub:(ag[i].sub||[]).filter((_,k)=>k!==j)};return{...f,agenda:ag};});
   return(<div>
@@ -2973,7 +3031,7 @@ function MeetingForm({m,onSave,onClose}) {
           </div>
           <span style={{fontSize:12,fontWeight:700,color:C.muted,minWidth:16}}>{i+1}.</span>
           <input value={ag.text} onChange={e=>setAgenda(i,"text",e.target.value)} placeholder="Agendapunkt..." style={{flex:1,padding:"6px 10px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,fontFamily:"inherit",outline:"none",background:"white",color:C.text}}/>
-          <button onClick={()=>addSub(i)} title="Unterpunkt" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted,fontSize:13,fontFamily:"inherit"}}>↳ Sub</button>
+          <button onClick={()=>addSub(i)} title="Unterpunkt hinzufügen" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:"white",cursor:"pointer",color:C.muted,fontSize:13,fontFamily:"inherit"}}>↳ Sub</button>
           <button onClick={()=>delAgenda(i)} style={{padding:"6px 8px",borderRadius:6,border:"1px solid #fca5a5",background:"#fff5f5",cursor:"pointer",color:"#ef4444"}}><Trash2 size={15}/></button>
         </div>
         {(ag.sub||[]).map((s,j)=><div key={j} style={{display:"flex",gap:6,alignItems:"center",marginLeft:24,marginTop:4}}>
@@ -4106,7 +4164,7 @@ function Nav({page,setPage,counts}) {
     {key:"teamplaner",icon:Shuffle,  label:"Teams",       count:counts.teamsets},
     {key:"turnier",  icon:Trophy,    label:"Turnier",     count:counts.tournaments},
     {key:"kasse",    icon:Wallet,    label:"Kasse"},
-    {key:"orga",     icon:ClipboardList,label:"Orga"},
+    {key:"orga",     icon:ClipboardList,label:"Orga",count:counts.openTodos},
     {key:"settings", icon:Settings,  label:"Einstellungen",alert:counts.pendingCount>0},
   ];
   const visible=allItems.filter(i=>can(counts.role,i.key)||(i.key==="settings"&&(counts.role==="trainer"||counts.role==="eltern")));
@@ -4451,8 +4509,8 @@ export default function App() {
   const [sessions,   setSessions,   sr]=useCloudStorage("sessions",   [], user);
   const [tournaments,setTournaments,tr]=useCloudStorage("tournaments",[], user);
   const [kassenbuch, setKassenbuch, kr]=useCloudStorage("kassenbuch", [], user);
-  const [orga,       setOrga,       ogr]=useCloudStorage("orga",      {todos:[],meetings:[]}, user);
-  const saveOrga=x=>setOrga(typeof x==="function"?x:()=>x);
+  const [todos,      setTodos,      tor]=useCloudStorage("todos",      [], user);
+  const [meetings,   setMeetings,   mr]=useCloudStorage("meetings",   [], user);
   const [apiKey,     setApiKey,     ar]=useStorage("apiKey",     "");
   const [lastExportAt,setLastExportAt]=useStorage("lastExportAt","");
   const [customCats, setCustomCats    ]=useCloudStorage("customCats", [], user);
@@ -4489,6 +4547,8 @@ export default function App() {
   const saveSe=x=>{ setSessions(upsert(x));logActivity(user,"session_saved",x.date||"");toast('Training gespeichert'); };
   const saveTo=x=>{ setTournaments(upsert(x)); };
   const saveKa=x=>{ setKassenbuch(upsert(x)); };
+  const saveTodo=x=>{ setTodos(upsert(x)); };
+  const saveMeeting=x=>{ setMeetings(upsert(x)); };
 
   const normExCats=exs=>(exs||[]).map(e=>({...e,category:normCat(e.category)||"uebung"}));
   const doImport=(data,mode)=>{
@@ -4514,7 +4574,7 @@ export default function App() {
     else if(mode==='replace_players') setPlayers(data.players||[]);
   };
   // Auth still loading
-  if(user===undefined||!er||!pr||!cr||!sr||!tr||!kr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
+  if(user===undefined||!er||!pr||!cr||!sr||!tr||!kr||!tor||!mr||!ar) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⚽</div><div style={{fontWeight:700}}>Lade...</div></div></div>;
   // Role still loading
   if(user&&role===null) return <div style={{height:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}><div style={{textAlign:"center",color:C.muted}}><div style={{fontSize:40,marginBottom:12}}>⏳</div><div style={{fontWeight:700}}>Lade Berechtigungen...</div><div style={{fontSize:12,marginTop:8}}>Falls dies länger dauert, bitte neu laden</div></div></div>;
   // Pending - waiting for admin approval
@@ -4537,11 +4597,11 @@ export default function App() {
     <style>{`*{box-sizing:border-box}body{margin:0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}`}</style>
     <Toasts/>
     <PresenceBadge onlineUsers={onlineUsers} currentUser={user}/>
-    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length,role,pendingCount:role==="admin"?pendingCount:0}}/>
+    <Nav page={page} setPage={setPage} counts={{exercises:exercises.length,players:players.filter(p=>p.active).length,sessions:sessions.length,tournaments:tournaments.length,teamsets:teamsets.length,openTodos:todos.filter(t=>!t.done).length||undefined,role,pendingCount:role==="admin"?pendingCount:0}}/>
     <main className="gm" style={{display:"block"}}>
       {page==="library"  &&<LibraryPage  exercises={exercises} onSave={saveEx} onDelete={id=>{const i=exercises.find(e=>e.id===id);setExercises(prev=>prev.filter(e=>e.id!==id));showUndo("Übung",i,()=>setExercises(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast}/>}
       {page==="team"     &&<TeamPage     players={players} coaches={coaches} sessions={sessions} onSaveSession={saveSe} onSavePlayer={can(role,"editAnything")?savePl:null} onDeletePlayer={can(role,"editAnything")?id=>{const i=players.find(p=>p.id===id);setPlayers(prev=>prev.filter(p=>p.id!==id));showUndo("Spieler",i,()=>setPlayers(prev=>[i,...prev]));}:null} onSaveCoach={can(role,"editAnything")?saveCo:null} onDeleteCoach={can(role,"editAnything")?id=>{const i=coaches.find(c=>c.id===id);setCoaches(prev=>prev.filter(c=>c.id!==id));showUndo("Trainer",i,()=>setCoaches(prev=>[i,...prev]));}:null} toast={toast} showStrength={can(role,"seeStrength")} readOnly={!can(role,"editAnything")} onAddToTraining={can(role,"editAnything")?({playerIds,coachIds,kids,coachCount})=>{setPendingSetup({playerIds,coachIds,kids:kids||playerIds.length,coachCount:coachCount||1,date:todayISO(),location:"outdoor",focus:""});setPage("training");}:null}/>}
-      {page==="orga"&&<OrgaPage orga={orga} onSaveOrga={saveOrga} toast={toast} user={user}/>}
+      {page==="orga"&&can(role,"orga")&&<OrgaPage todos={todos} onSaveTodo={saveTodo} onDeleteTodo={id=>{const i=todos.find(t=>t.id===id);setTodos(prev=>prev.filter(t=>t.id!==id));showUndo("Task",i,()=>setTodos(prev=>[i,...prev]));}} meetings={meetings} onSaveMeeting={saveMeeting} onDeleteMeeting={id=>{const i=meetings.find(m=>m.id===id);setMeetings(prev=>prev.filter(m=>m.id!==id));showUndo("Trainertreff",i,()=>setMeetings(prev=>[i,...prev]));}} coaches={coaches} currentUser={user} toast={toast} showUndo={showUndo} readOnly={!can(role,"editAnything")}/>}
       {page==="teamplaner"&&<TeamplanerPage players={players} teamsets={teamsets} onSaveTeamset={can(role,"editAnything")?saveTSets:null} onDeleteTeamset={can(role,"editAnything")?id=>{const i=teamsets.find(t=>t.id===id);setTeamsets(prev=>prev.filter(t=>t.id!==id));showUndo("Team-Aufstellung",i,()=>setTeamsets(prev=>[i,...prev]));}:null} readOnly={!can(role,"editAnything")} showStrength={can(role,"seeStrength")} toast={toast}/>}
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} />}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches}/>}
