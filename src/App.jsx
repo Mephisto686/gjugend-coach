@@ -4172,7 +4172,7 @@ function Nav({page,setPage,counts}) {
   ];
   const visible=allItems.filter(i=>can(counts.role,i.key)||(i.key==="settings"&&(counts.role==="trainer"||counts.role==="eltern")));
   // Main tabs: library, training, teamplaner, turnier + Mehr
-  const MAIN_KEYS=["library","training","teamplaner","turnier"];
+  const MAIN_KEYS=["library","training","teamplaner","orga"];
   const mainItems=visible.filter(i=>MAIN_KEYS.includes(i.key));
   const moreItems=visible.filter(i=>!MAIN_KEYS.includes(i.key));
   const moreActive=moreItems.some(i=>i.key===page);
@@ -4211,18 +4211,18 @@ function Nav({page,setPage,counts}) {
     </div>
     {/* More sheet overlay */}
     {showMore&&<div onClick={()=>setShowMore(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:200}}/>}
-    {/* More sheet */}
-    {showMore&&<div style={{position:"fixed",bottom:60,left:0,right:0,background:"white",borderRadius:"16px 16px 0 0",padding:"12px 16px 16px",zIndex:201,boxShadow:"0 -4px 24px rgba(0,0,0,.15)"}}>
-      <div style={{width:36,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
-      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:10}}>Weitere Bereiche</div>
-      <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.min(moreItems.length,2)},1fr)`,gap:8}}>
+    {/* More sheet – Liste */}
+    {showMore&&<div style={{position:"fixed",bottom:60,left:0,right:0,background:"white",borderRadius:"16px 16px 0 0",padding:"12px 16px 12px",zIndex:201,boxShadow:"0 -4px 24px rgba(0,0,0,.15)"}}>
+      <div style={{width:36,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 12px"}}/>
+      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,marginBottom:8}}>Weitere Bereiche</div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
         {moreItems.map(({key,icon:Icon,label,count,alert})=>{
           const active=page===key;
-          return(<button key={key} onClick={()=>{setPage(key);setShowMore(false);}} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"14px 8px",borderRadius:12,border:`1.5px solid ${active?C.primary:C.border}`,background:active?C.accentL:"white",cursor:"pointer",fontFamily:"inherit",position:"relative"}}>
-            <Icon size={22} color={active?C.primary:C.text} strokeWidth={active?2.5:1.8}/>
-            {alert&&<span style={{position:"absolute",top:8,right:8,background:"#ef4444",width:8,height:8,borderRadius:"50%",display:"block"}}/>}
-            <span style={{fontSize:11,fontWeight:700,color:active?C.primary:C.text}}>{label}</span>
-            {count!==undefined&&count>0&&<span style={{fontSize:10,color:C.muted}}>({count})</span>}
+          return(<button key={key} onClick={()=>{setPage(key);setShowMore(false);}} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderRadius:12,border:`1.5px solid ${active?C.primary:C.border}`,background:active?C.accentL:"#f8fafc",cursor:"pointer",fontFamily:"inherit",position:"relative",width:"100%",textAlign:"left"}}>
+            <Icon size={20} color={active?C.primary:C.text} strokeWidth={active?2.5:1.8}/>
+            {alert&&<span style={{position:"absolute",top:8,left:28,background:"#ef4444",width:7,height:7,borderRadius:"50%",display:"block"}}/>}
+            <span style={{fontSize:14,fontWeight:700,color:active?C.primary:C.text,flex:1}}>{label}</span>
+            {count!==undefined&&count>0&&<span style={{fontSize:12,color:active?C.primary:C.muted,background:active?C.accentL:"#e2e8f0",borderRadius:20,padding:"1px 8px",fontWeight:700}}>{count}</span>}
           </button>);
         })}
       </div>
