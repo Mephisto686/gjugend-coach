@@ -3919,7 +3919,7 @@ function UserNameEditor({u,isSelf,setUserName}) {
   </div>);
 }
 
-function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup,role,allUsers,setUserRole,setUserName,deleteUser,prefs={},onPrefChange}) {
+function SettingsPage({exercises,players,coaches,sessions,tournaments,kassenbuch,onImport,toast,apiKey,onSaveApiKey,customCats,onSaveCustomCats,firebaseUser,onLogout,onFullBackup,role,allUsers,setUserRole,setUserName,deleteUser,prefs={},onPrefChange,onlineUsers}) {
   const ref=useRef();const [mode,setMode]=useState("merge");const [ki,setKi]=useState(apiKey||"");const [kv,setKv]=useState(false);
   const doImport=async e=>{ const f=e.target.files?.[0];if(!f)return;try{if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));onImport({players:p},mode==="replace"?"replace_players":"merge_players");toast(`${p.length} Spieler importiert`);}else{const d=JSON.parse(await readText(f));
     const t=d.type||"unknown";
@@ -4159,6 +4159,8 @@ function BirthdayBanner({players}) {
 
 function Nav({page,setPage,counts}) {
   const [showMore,setShowMore]=useState(false);
+  const swipeRef=useRef({});
+
   const allItems=[
     {key:"library",  icon:BookOpen,  label:"Bibliothek", count:counts.exercises},
     {key:"team",     icon:Users,     label:"Team",        count:counts.players},
@@ -4170,12 +4172,53 @@ function Nav({page,setPage,counts}) {
     {key:"settings", icon:Settings,  label:"Einstellungen",alert:counts.pendingCount>0},
   ];
   const visible=allItems.filter(i=>can(counts.role,i.key)||(i.key==="settings"&&(counts.role==="trainer"||counts.role==="eltern")));
-  // Main tabs: library, training, teamplaner, turnier + Mehr
   const MAIN_KEYS=["library","training","teamplaner","orga"];
   const mainItems=visible.filter(i=>MAIN_KEYS.includes(i.key));
   const moreItems=visible.filter(i=>!MAIN_KEYS.includes(i.key));
   const moreActive=moreItems.some(i=>i.key===page);
   const moreAlert=moreItems.some(i=>i.alert);
+
+  // Swipe navigation
+  useEffect(()=>{
+    const onStart=e=>{
+      const t=e.touches[0];
+      swipeRef.current={x:t.clientX,y:t.clientY,time:Date.now()};
+    };
+    const onEnd=e=>{
+      const s=swipeRef.current;
+      if(!s.x) return;
+      const dx=e.changedTouches[0].clientX-s.x;
+      const dy=e.changedTouches[0].clientY-s.y;
+      const dt=Date.now()-s.time;
+      // Only horizontal swipes: dx > 50px, faster than 400ms, more horizontal than vertical
+      if(Math.abs(dx)<50||Math.abs(dx)<Math.abs(dy)*1.5||dt>400) return;
+      const visMain=mainItems.map(i=>i.key);
+      const curIdx=visMain.indexOf(page);
+      if(dx<0) {
+        // swipe left → next
+        if(curIdx===-1||curIdx===visMain.length-1) {
+          // currently on mehr-tab or last main tab → open mehr or wrap
+          if(showMore) { setShowMore(false); setPage(visMain[0]); }
+          else setShowMore(true);
+        } else {
+          setPage(visMain[curIdx+1]);
+          setShowMore(false);
+        }
+      } else {
+        // swipe right → prev
+        if(showMore) { setShowMore(false); }
+        else if(curIdx<=0) { setPage(visMain[visMain.length-1]); }
+        else { setPage(visMain[curIdx-1]); setShowMore(false); }
+      }
+      swipeRef.current={};
+    };
+    document.addEventListener("touchstart",onStart,{passive:true});
+    document.addEventListener("touchend",onEnd,{passive:true});
+    return()=>{
+      document.removeEventListener("touchstart",onStart);
+      document.removeEventListener("touchend",onEnd);
+    };
+  },[page,showMore,mainItems]);
 
   const navBtn=(item)=>{
     const active=page===item.key;
@@ -4341,27 +4384,27 @@ function PageHeader({title, sub, onlineUsers, currentUser}) {
   const [showList,setShowList]=useState(false);
   const users=onlineUsers||[];
   return(
-    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
-      <div>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+      <div style={{minWidth:0,flex:1}}>
         <h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>{title}</h1>
         {sub&&<div style={{fontSize:13,color:C.muted,marginTop:2}}>{sub}</div>}
       </div>
-      {users.length>0&&<div style={{position:"relative",flexShrink:0,paddingTop:2}}>
-        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3,cursor:"pointer"}} onClick={()=>setShowList(s=>!s)}>
+      {users.length>0&&<div style={{position:"relative",flexShrink:0,marginLeft:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}} onClick={()=>setShowList(s=>!s)}>
           <div style={{display:"flex"}}>
             {users.map((u,i)=>(
-              <div key={u.uid} style={{position:"relative",width:30,height:30,borderRadius:"50%",overflow:"hidden",border:`2px solid white`,background:"#e2e8f0",flexShrink:0,marginLeft:i===0?0:-8,zIndex:users.length-i}}>
+              <div key={u.uid} style={{position:"relative",width:30,height:30,borderRadius:"50%",overflow:"hidden",border:"2px solid white",background:"#e2e8f0",flexShrink:0,marginLeft:i===0?0:-8,zIndex:users.length-i}}>
                 {u.photo?<img src={u.photo} width={30} height={30} style={{objectFit:"cover"}}/>
                   :<div style={{width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:800,color:"#475569",background:u.uid===currentUser?.uid?"#dcfce7":"#fef9c3"}}>{(u.name||"?")[0].toUpperCase()}</div>}
                 <div style={{position:"absolute",bottom:0,right:0,width:8,height:8,borderRadius:"50%",background:"#22c55e",border:"1.5px solid white"}}/>
               </div>
             ))}
           </div>
-          <div style={{fontSize:10,color:"#16a34a",fontWeight:700}}>{users.length} online</div>
+          <div style={{fontSize:11,color:"#16a34a",fontWeight:700,whiteSpace:"nowrap"}}>{users.length} online</div>
         </div>
         {showList&&<>
           <div style={{position:"fixed",inset:0,zIndex:9990}} onClick={()=>setShowList(false)}/>
-          <div style={{position:"absolute",top:52,right:0,background:"white",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,.15)",padding:"8px 0",minWidth:160,zIndex:9991}}>
+          <div style={{position:"absolute",top:38,right:0,background:"white",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,.15)",padding:"8px 0",minWidth:160,zIndex:9991}}>
             <div style={{fontSize:10,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:.6,padding:"4px 12px 6px"}}>Gerade online</div>
             {users.map(u=><div key={u.uid} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px"}}>
               {u.photo?<img src={u.photo} width={22} height={22} style={{borderRadius:"50%"}}/>
@@ -4617,7 +4660,7 @@ export default function App() {
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} onlineUsers={onlineUsers} currentUser={user}/>}
       {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches} onlineUsers={onlineUsers} currentUser={user}/>}
       {page==="kasse"    &&can(role,"kasse")&&<KassePage kassenbuch={kassenbuch} onSave={can(role,"editKasse")?saveKa:null} onDelete={can(role,"editKasse")?id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}:null} readOnly={!can(role,"editKasse")} toast={toast} onlineUsers={onlineUsers} currentUser={user}/>}
-      {(can(role,"settings")||role==="trainer"||role==="eltern")&&page==="settings"&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole} setUserName={setUserName} deleteUser={deleteUser} prefs={prefs} onPrefChange={toggleDark}/>}
+      {(can(role,"settings")||role==="trainer"||role==="eltern")&&page==="settings"&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole} setUserName={setUserName} deleteUser={deleteUser} prefs={prefs} onPrefChange={toggleDark} onlineUsers={onlineUsers}/>}
     </main>
     {undoBuf&&<div style={{position:"fixed",bottom:76,left:12,right:12,zIndex:9999,display:"flex",alignItems:"center",gap:10,background:"#1e293b",color:"white",borderRadius:12,padding:"12px 16px",boxShadow:"0 4px 24px rgba(0,0,0,.35)"}}>
       <span style={{fontSize:13,fontWeight:600,flex:1}}>{undoBuf.label}</span>
