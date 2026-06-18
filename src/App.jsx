@@ -1506,6 +1506,7 @@ function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeleteP
   const [modal,setModal]=useState(null);
   const [del,setDel]=useState(null);
   const [kontakteSearch,setKontakteSearch]=useState("");
+  const [kontakteFilter,setKontakteFilter]=useState({active:"active",mitglied:"",pass:""});
   const playerImportRef=useRef();
   const coachImportRef=useRef();
 
@@ -1575,20 +1576,47 @@ function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeleteP
         </div>);})}
       </div>)}
     {tab==="kontakte"&&(<div>
-      <div style={{position:"relative",marginBottom:16}}>
+      <div style={{position:"relative",marginBottom:10}}>
         <Search size={15} style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:C.muted}}/>
         <input value={kontakteSearch} onChange={e=>setKontakteSearch(e.target.value)} placeholder="Spieler oder Kontakt suchen..." style={{width:"100%",padding:"9px 12px 9px 36px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",fontFamily:"inherit",boxSizing:"border-box"}}/>
       </div>
+      {/* Filterzeile */}
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+        {[["active","Aktiv"],["","Alle"],["inactive","Inaktiv"]].map(([v,l])=>{
+          const on=kontakteFilter.active===v;
+          return <button key={v} onClick={()=>setKontakteFilter(f=>({...f,active:v}))} style={{padding:"4px 11px",borderRadius:20,border:`1.5px solid ${on?C.primary:C.border}`,background:on?C.accentL:"white",color:on?C.primary:C.muted,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:12}}>{l}</button>;
+        })}
+        <div style={{width:1,background:C.border,margin:"0 2px"}}/>
+        {[["ja","✓ Mitglied"],["nein","○ Kein Mitglied"]].map(([v,l])=>{
+          const on=kontakteFilter.mitglied===v;
+          return <button key={v} onClick={()=>setKontakteFilter(f=>({...f,mitglied:on?"":v}))} style={{padding:"4px 11px",borderRadius:20,border:`1.5px solid ${on?"#16a34a":C.border}`,background:on?"#dcfce7":"white",color:on?"#16a34a":C.muted,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:12}}>{l}</button>;
+        })}
+        <div style={{width:1,background:C.border,margin:"0 2px"}}/>
+        {[["ja","✓ Pass"],["nein","○ Kein Pass"]].map(([v,l])=>{
+          const on=kontakteFilter.pass===v;
+          return <button key={v} onClick={()=>setKontakteFilter(f=>({...f,pass:on?"":v}))} style={{padding:"4px 11px",borderRadius:20,border:`1.5px solid ${on?"#1d4ed8":C.border}`,background:on?"#dbeafe":"white",color:on?"#1d4ed8":C.muted,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:12}}>{l}</button>;
+        })}
+      </div>
       {players.length===0?<Empty icon="👥" title="Noch keine Spieler" sub="Lege zuerst Spieler im Tab ‚Spieler' an." onAdd={()=>setTab("players")} addLabel="Zu Spieler"/>:
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {players.filter(p=>{const q=kontakteSearch.toLowerCase();if(!q)return true;if(p.name.toLowerCase().includes(q))return true;return (p.contacts||[]).some(c=>c.name.toLowerCase().includes(q)||c.phone?.includes(q));}).map(p=>{
+          {players.filter(p=>{
+            const q=kontakteSearch.toLowerCase();
+            if(q&&!p.name.toLowerCase().includes(q)&&!(p.contacts||[]).some(c=>c.name.toLowerCase().includes(q)||c.phone?.includes(q)))return false;
+            if(kontakteFilter.active==="active"&&!p.active)return false;
+            if(kontakteFilter.active==="inactive"&&p.active)return false;
+            if(kontakteFilter.mitglied==="ja"&&!p.vereinsmitglied)return false;
+            if(kontakteFilter.mitglied==="nein"&&p.vereinsmitglied)return false;
+            if(kontakteFilter.pass==="ja"&&!p.spielerpass)return false;
+            if(kontakteFilter.pass==="nein"&&p.spielerpass)return false;
+            return true;
+          }).map(p=>{
             const contacts=p.contacts||[];
             return(<div key={p.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${C.border}`,overflow:"hidden"}}>
               <div style={{padding:"12px 16px",background:"#f8fafc",borderBottom:contacts.length?`1px solid ${C.border}`:"none",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
                   <div style={{width:36,height:36,borderRadius:"50%",background:STR[p.strength].light,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{STR[p.strength].emoji}</div>
                   <div>
-                    <div style={{fontWeight:800,fontSize:15,color:C.text}}>{p.name}</div>
+                    <div style={{fontWeight:800,fontSize:15,color:C.text}}>{p.name}{!p.active&&<span style={{fontSize:11,color:C.muted,fontWeight:400,marginLeft:6}}>(inaktiv)</span>}</div>
                     <div style={{display:"flex",gap:8,marginTop:2}}>
                       {p.jersey&&<span style={{fontSize:11,color:C.muted}}>#{p.jersey}</span>}
                       <span style={{fontSize:11,padding:"1px 6px",borderRadius:10,background:p.vereinsmitglied?"#dcfce7":"#f1f5f9",color:p.vereinsmitglied?"#16a34a":C.muted,fontWeight:700}}>{p.vereinsmitglied?"✓ Mitglied":"○ Kein Mitglied"}</span>
@@ -3688,25 +3716,27 @@ function KassePage({kassenbuch,onSave,onDelete,toast,readOnly=false,onlineUsers,
   const aus=kassenbuch.filter(k=>k.type==="aus").reduce((s,k)=>s+k.amount,0);
   const balance=ein-aus;
   const fmt=n=>n.toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const bubble=(bg,border,textColor,label,value,key)=>{
+    const active=filter===key;
+    return(<div onClick={()=>setFilter(active?"":key)} style={{background:active?bg:"white",borderRadius:12,padding:"14px 16px",border:`2px solid ${active?textColor:border}`,cursor:"pointer",transition:"all .15s",boxShadow:active?`0 0 0 3px ${border}`:"none"}}>
+      <div style={{fontSize:10,fontWeight:800,color:textColor,textTransform:"uppercase",letterSpacing:.8,marginBottom:4,display:"flex",alignItems:"center",gap:4}}>
+        {active&&<span style={{fontSize:9}}>✓</span>}{label}
+      </div>
+      <div style={{fontSize:18,fontWeight:900,color:textColor}}>{value}</div>
+    </div>);
+  };
   return(<div>
-    <PageHeader title="Mannschaftskasse" sub={`${kassenbuch.length} Einträge`} onlineUsers={onlineUsers} currentUser={currentUser}/>
+    <PageHeader title="Mannschaftskasse" sub={`${kassenbuch.length} Einträge${filter==="ein"?" · Einnahmen":filter==="aus"?" · Ausgaben":""}`} onlineUsers={onlineUsers} currentUser={currentUser}/>
     {!readOnly&&<div style={{marginBottom:16}}><Btn onClick={()=>setModal({type:"form",data:null})}><Plus size={16}/> Eintrag</Btn></div>}
-    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
-      <div style={{background:"#dcfce7",borderRadius:12,padding:"16px 18px",border:"1.5px solid #86efac"}}>
-        <div style={{fontSize:11,fontWeight:800,color:"#15803d",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Einnahmen</div>
-        <div style={{fontSize:20,fontWeight:900,color:"#15803d"}}>+{fmt(ein)} €</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
+      {bubble("#dcfce7","#86efac","#15803d","Einnahmen",`+${fmt(ein)} €`,"ein")}
+      {bubble("#fee2e2","#fca5a5","#dc2626","Ausgaben",`-${fmt(aus)} €`,"aus")}
+      <div onClick={()=>setFilter("")} style={{background:filter===""?(balance>=0?"#eff6ff":"#fef2f2"):"white",borderRadius:12,padding:"14px 16px",border:`2px solid ${filter===""?(balance>=0?"#93c5fd":"#fca5a5"):(balance>=0?"#93c5fd":"#fca5a5")}`,cursor:"pointer",transition:"all .15s",boxShadow:filter===""?`0 0 0 3px ${balance>=0?"#bfdbfe":"#fecaca"}`:"none"}}>
+        <div style={{fontSize:10,fontWeight:800,color:balance>=0?"#1d4ed8":"#dc2626",textTransform:"uppercase",letterSpacing:.8,marginBottom:4,display:"flex",alignItems:"center",gap:4}}>
+          {filter===""&&<span style={{fontSize:9}}>✓</span>}Kontostand
+        </div>
+        <div style={{fontSize:18,fontWeight:900,color:balance>=0?"#1d4ed8":"#dc2626"}}>{balance>=0?"+":""}{fmt(balance)} €</div>
       </div>
-      <div style={{background:"#fee2e2",borderRadius:12,padding:"16px 18px",border:"1.5px solid #fca5a5"}}>
-        <div style={{fontSize:11,fontWeight:800,color:"#dc2626",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Ausgaben</div>
-        <div style={{fontSize:20,fontWeight:900,color:"#dc2626"}}>-{fmt(aus)} €</div>
-      </div>
-      <div style={{background:balance>=0?"#eff6ff":"#fef2f2",borderRadius:12,padding:"16px 18px",border:`1.5px solid ${balance>=0?"#93c5fd":"#fca5a5"}`}}>
-        <div style={{fontSize:11,fontWeight:800,color:balance>=0?"#1d4ed8":"#dc2626",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Kontostand</div>
-        <div style={{fontSize:20,fontWeight:900,color:balance>=0?"#1d4ed8":"#dc2626"}}>{balance>=0?"+":""}{fmt(balance)} €</div>
-      </div>
-    </div>
-    <div style={{display:"flex",gap:6,marginBottom:16}}>
-      {[["","Alle"],["ein","💰 Einnahmen"],["aus","💸 Ausgaben"]].map(([k,l])=><button key={k} onClick={()=>setFilter(k)} style={{padding:"6px 14px",borderRadius:20,border:`1.5px solid ${filter===k?C.primary:C.border}`,background:filter===k?C.accentL:"white",color:filter===k?C.primary:C.muted,cursor:"pointer",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>{l}</button>)}
     </div>
     {kassenbuch.length===0?<Empty icon="💰" title="Noch kein Eintrag" sub="Buche Einnahmen und Ausgaben der Mannschaftskasse." onAdd={()=>setModal({type:"form",data:null})} addLabel="Ersten Eintrag erstellen"/>:
       filtered.length===0?<div style={{textAlign:"center",padding:"40px",color:C.muted,fontSize:14}}>Keine Einträge für diesen Filter.</div>:
