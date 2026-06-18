@@ -1103,25 +1103,23 @@ ${PDF_SCRIPT}</body></html>`;
   });
   const allTags=[...new Set(exercises.flatMap(e=>e.tags||[]))].sort();
   return(<div>
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <PageHeader title="Übungsbibliothek" sub={`${exercises.length} Übungen`} onlineUsers={onlineUsers} currentUser={currentUser}/>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {selMode
-          ?<><Btn sm variant="secondary" onClick={()=>setSelIds(filtered.map(e=>e.id))}>Alle</Btn>
-            <Btn sm variant="secondary" onClick={()=>setSelIds([])}>Keine</Btn>
-            {selIds.length>0&&<><Btn sm onClick={bulkExport}><Download size={13}/> {selIds.length} JSON</Btn>
-            <Btn sm onClick={()=>printExercises(exercises.filter(e=>selIds.includes(e.id)))}>🖨️ PDF</Btn></>}
-            <Btn sm variant="secondary" onClick={()=>{setSelMode(false);setSelIds([]);}}>✕ Auswahl</Btn></>
-          :<><Btn onClick={()=>setSelMode(true)} variant="secondary" sm><CheckSquare size={14}/> Auswahl</Btn>
-            <Btn onClick={()=>importRef.current.click()} variant="secondary" sm><Upload size={14}/> Import</Btn>
-            <input ref={importRef} type="file" accept=".json" onChange={handleImportJson} style={{display:"none"}}/>
-            <Btn onClick={()=>setModal({type:"ai"})} variant="ai" sm><Bot size={14}/> KI</Btn>
-            <Btn onClick={()=>setModal({type:"form",ex:null})}><Plus size={16}/> Neu</Btn></>}
-        <div style={{display:"flex",border:`1.5px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-          {[["grid","⊞"],["compact","☰"]].map(([m,icon])=>(
-            <button key={m} onClick={()=>setViewMode(m)} style={{padding:"6px 11px",border:"none",background:viewMode===m?C.primary:"white",color:viewMode===m?"white":C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>{icon}</button>
-          ))}
-        </div>
+    <PageHeader title="Übungsbibliothek" sub={`${exercises.length} Übungen`} onlineUsers={onlineUsers} currentUser={currentUser}/>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+      {selMode
+        ?<><Btn sm variant="secondary" onClick={()=>setSelIds(filtered.map(e=>e.id))}>Alle</Btn>
+          <Btn sm variant="secondary" onClick={()=>setSelIds([])}>Keine</Btn>
+          {selIds.length>0&&<><Btn sm onClick={bulkExport}><Download size={13}/> {selIds.length} JSON</Btn>
+          <Btn sm onClick={()=>printExercises(exercises.filter(e=>selIds.includes(e.id)))}>🖨️ PDF</Btn></>}
+          <Btn sm variant="secondary" onClick={()=>{setSelMode(false);setSelIds([]);}}>✕ Auswahl</Btn></>
+        :<><Btn onClick={()=>setSelMode(true)} variant="secondary" sm><CheckSquare size={14}/> Auswahl</Btn>
+          <Btn onClick={()=>importRef.current.click()} variant="secondary" sm><Upload size={14}/> Import</Btn>
+          <input ref={importRef} type="file" accept=".json" onChange={handleImportJson} style={{display:"none"}}/>
+          <Btn onClick={()=>setModal({type:"ai"})} variant="ai" sm><Bot size={14}/> KI</Btn>
+          <Btn onClick={()=>setModal({type:"form",ex:null})}><Plus size={16}/> Neu</Btn></>}
+      <div style={{display:"flex",border:`1.5px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+        {[["grid","⊞"],["compact","☰"]].map(([m,icon])=>(
+          <button key={m} onClick={()=>setViewMode(m)} style={{padding:"6px 11px",border:"none",background:viewMode===m?C.primary:"white",color:viewMode===m?"white":C.muted,cursor:"pointer",fontSize:14,lineHeight:1}}>{icon}</button>
+        ))}
       </div>
     </div>
     <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap"}}>
@@ -1540,13 +1538,11 @@ function TeamPage({players,coaches,sessions,onSaveSession,onSavePlayer,onDeleteP
   const tb=(k,l,n)=><button onClick={()=>setTab(k)} style={{padding:"8px 20px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:14,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l} <span style={{fontSize:12,opacity:.7}}>({n})</span></button>;
   const totalSel=selPlayers.length+selCoaches.length;
   return(<div>
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <PageHeader title="Team" sub={`${players.filter(p=>p.active).length} aktive Spieler · ${coaches.filter(c=>c.active).length} Trainer`} onlineUsers={onlineUsers} currentUser={currentUser}/>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {tab==="players"&&<><Btn onClick={()=>playerImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Spieler importieren</Btn><input ref={playerImportRef} type="file" accept=".json,.csv" onChange={async e=>{const f=e.target.files?.[0];if(!f)return;if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));p.forEach(x=>onSavePlayer(x));toast(`${p.length} Spieler importiert`);} else handleImportPlayers(e); e.target.value="";}} style={{display:"none"}}/></>}
-        {tab==="coaches"&&<><Btn onClick={()=>coachImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Trainer importieren</Btn><input ref={coachImportRef} type="file" accept=".json" onChange={handleImportCoaches} style={{display:"none"}}/></>}
-        {(tab==="players"||tab==="coaches")&&<Btn onClick={()=>setModal({type:tab==="players"?"pf":"cf",data:null})}><Plus size={16}/> {tab==="players"?"Spieler":"Trainer"} hinzufügen</Btn>}
-      </div>
+    <PageHeader title="Team" sub={`${players.filter(p=>p.active).length} aktive Spieler · ${coaches.filter(c=>c.active).length} Trainer`} onlineUsers={onlineUsers} currentUser={currentUser}/>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+      {tab==="players"&&<><Btn onClick={()=>playerImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Spieler importieren</Btn><input ref={playerImportRef} type="file" accept=".json,.csv" onChange={async e=>{const f=e.target.files?.[0];if(!f)return;if(f.name.endsWith(".csv")){const p=parseCsvPlayers(await readText(f));p.forEach(x=>onSavePlayer(x));toast(`${p.length} Spieler importiert`);} else handleImportPlayers(e); e.target.value="";}} style={{display:"none"}}/></>}
+      {tab==="coaches"&&<><Btn onClick={()=>coachImportRef.current.click()} variant="secondary" sm><Upload size={14}/> Trainer importieren</Btn><input ref={coachImportRef} type="file" accept=".json" onChange={handleImportCoaches} style={{display:"none"}}/></>}
+      {(tab==="players"||tab==="coaches")&&<Btn onClick={()=>setModal({type:tab==="players"?"pf":"cf",data:null})}><Plus size={16}/> {tab==="players"?"Spieler":"Trainer"} hinzufügen</Btn>}
     </div>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:12,width:"fit-content"}}>{tb("players","Spieler",players.length)}{tb("coaches","Trainer",coaches.length)}{tb("kontakte","Kontakte",players.filter(p=>(p.contacts||[]).length>0).length)}</div>
     {totalSel>0&&<div style={{borderRadius:10,border:`1.5px solid ${C.primary}`,background:C.accentL,padding:"10px 14px",marginBottom:12}}>
@@ -2574,10 +2570,8 @@ function TeamplanerPage({players,teamsets,onSaveTeamset,onDeleteTeamset,toast,re
   }
 
   return(<div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-      <PageHeader title="Teams" sub={`${sorted.length} gespeicherte Aufstellungen`} onlineUsers={onlineUsers} currentUser={currentUser}/>
-      {!readOnly&&onSaveTeamset&&<Btn onClick={openNew}><Plus size={15}/> Neue Aufstellung</Btn>}
-    </div>
+    <PageHeader title="Teams" sub={`${sorted.length} gespeicherte Aufstellungen`} onlineUsers={onlineUsers} currentUser={currentUser}/>
+    {!readOnly&&onSaveTeamset&&<div style={{marginBottom:16}}><Btn onClick={openNew}><Plus size={15}/> Neue Aufstellung</Btn></div>}
 
     {sorted.length===0&&<div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
       <div style={{fontSize:40,marginBottom:12}}>👥</div>
@@ -2856,7 +2850,7 @@ function OrgaPage({todos,onSaveTodo,onDeleteTodo,meetings,onSaveMeeting,onDelete
   const openCount=(todos||[]).filter(t=>!t.done).length;
   const tb=(k,l,n)=><button onClick={()=>setTab(k)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}{n>0&&<span style={{fontSize:11,background:tab===k?"rgba(255,255,255,.3)":C.accentL,color:tab===k?"white":C.primary,borderRadius:20,padding:"0 6px"}}>{n}</span>}</button>;
   return(<div>
-    <PageHeader title="Organisation" sub="To Dos &amp; Trainertreff" onlineUsers={onlineUsers} currentUser={currentUser}/>
+    <PageHeader title="Organisation" sub="To Dos & Trainertreff" onlineUsers={onlineUsers} currentUser={currentUser}/>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20}}>
       {tb("todos","✅ To Dos",openCount)}
       {tb("meetings","📅 Trainertreff",(meetings||[]).length)}
@@ -3058,12 +3052,10 @@ function TrainingPage({sessions,players,coaches,exercises,onSaveSession,onDelete
   const sorted=[...sessions].sort((a,b)=>new Date(b.date)-new Date(a.date));
   const gP=id=>players.find(p=>p.id===id),gC=id=>coaches.find(c=>c.id===id),gE=id=>exercises.find(e=>e.id===id);
   return(<div>
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <PageHeader title="Training" sub={`${sessions.length} Einheiten`} onlineUsers={onlineUsers} currentUser={currentUser}/>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <Btn onClick={()=>setModal({type:"notfall"})} style={{background:"#dc2626",color:"white"}} sm><AlertTriangle size={14}/> SOS</Btn>
-        <Btn onClick={()=>setModal({type:"setup"})}><CalendarDays size={16}/> Training planen</Btn>
-      </div>
+    <PageHeader title="Training" sub={`${sessions.length} Einheiten`} onlineUsers={onlineUsers} currentUser={currentUser}/>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+      <Btn onClick={()=>setModal({type:"notfall"})} style={{background:"#dc2626",color:"white"}} sm><AlertTriangle size={14}/> SOS</Btn>
+      <Btn onClick={()=>setModal({type:"setup"})}><CalendarDays size={16}/> Training planen</Btn>
     </div>
 
     {tab==="history"&&(sorted.length===0?<Empty icon="📅" title="Noch kein Training" onAdd={()=>setModal({type:"session",data:null})} addLabel="Training planen"/>:
@@ -3634,10 +3626,8 @@ function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[]
   const [open,setOpen]=useState(null);
   if(open){const t=tournaments.find(x=>x.id===open);if(!t){setOpen(null);return null;}return<TournamentDetail tournament={t} onUpdate={onSaveTournament} onBack={()=>setOpen(null)} coaches={coaches}/>;}
   return(<div>
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <PageHeader title="Turnier" sub={`${tournaments.length} Turniere`} onlineUsers={onlineUsers} currentUser={currentUser}/>
-      <Btn onClick={()=>setModal({type:"create"})}><Plus size={16}/> Neues Turnier</Btn>
-    </div>
+    <PageHeader title="Turnier" sub={`${tournaments.length} Turniere`} onlineUsers={onlineUsers} currentUser={currentUser}/>
+    <div style={{marginBottom:16}}><Btn onClick={()=>setModal({type:"create"})}><Plus size={16}/> Neues Turnier</Btn></div>
     {tournaments.length===0?<Empty icon="🏆" title="Noch kein Turnier" sub="Plane ein Rundenturnier – intern oder mit externen Teams." onAdd={()=>setModal({type:"create"})} addLabel="Turnier erstellen"/>:
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
         {[...tournaments].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(t=>{
@@ -3699,10 +3689,8 @@ function KassePage({kassenbuch,onSave,onDelete,toast,readOnly=false,onlineUsers,
   const balance=ein-aus;
   const fmt=n=>n.toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2});
   return(<div>
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:12}}>
-      <PageHeader title="Mannschaftskasse" sub={`${kassenbuch.length} Einträge`} onlineUsers={onlineUsers} currentUser={currentUser}/>
-      {!readOnly&&<Btn onClick={()=>setModal({type:"form",data:null})}><Plus size={16}/> Eintrag</Btn>}
-    </div>
+    <PageHeader title="Mannschaftskasse" sub={`${kassenbuch.length} Einträge`} onlineUsers={onlineUsers} currentUser={currentUser}/>
+    {!readOnly&&<div style={{marginBottom:16}}><Btn onClick={()=>setModal({type:"form",data:null})}><Plus size={16}/> Eintrag</Btn></div>}
     <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
       <div style={{background:"#dcfce7",borderRadius:12,padding:"16px 18px",border:"1.5px solid #86efac"}}>
         <div style={{fontSize:11,fontWeight:800,color:"#15803d",textTransform:"uppercase",letterSpacing:.8,marginBottom:4}}>Einnahmen</div>
@@ -4384,8 +4372,8 @@ function PageHeader({title, sub, onlineUsers, currentUser}) {
   const [showList,setShowList]=useState(false);
   const users=onlineUsers||[];
   return(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-      <div style={{minWidth:0,flex:1}}>
+    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
+      <div style={{minWidth:0}}>
         <h1 style={{margin:0,fontSize:22,fontWeight:900,color:C.text}}>{title}</h1>
         {sub&&<div style={{fontSize:13,color:C.muted,marginTop:2}}>{sub}</div>}
       </div>
