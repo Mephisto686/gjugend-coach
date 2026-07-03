@@ -205,7 +205,7 @@ async function logActivity(user, action, detail="") {
   } catch(e) {}
 }
 
-const APP_VERSION = "3.9.5";
+const APP_VERSION = "3.9.6";
 const BUILTIN_CATS = {
   aufwaermen: { label:"Aufwärmen", emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   uebung:     { label:"Übung",     emoji:"⚽", color:"#2563eb", bg:"#eff6ff", builtin:true },
@@ -551,6 +551,140 @@ const calcStandings = (teams,matches) => {
   matches.filter(m=>m.played).forEach(m=>{ const h=t.find(x=>x.id===m.homeId),a=t.find(x=>x.id===m.awayId);if(!h||!a)return;h.pl++;a.pl++;h.gf+=m.homeScore;h.ga+=m.awayScore;a.gf+=m.awayScore;a.ga+=m.homeScore;if(m.homeScore>m.awayScore){h.w++;h.pts+=3;a.l++;}else if(m.homeScore<m.awayScore){a.w++;a.pts+=3;h.l++;}else{h.d++;h.pts++;a.d++;a.pts++;} });
   return t.sort((a,b)=>b.pts-a.pts||(b.gf-b.ga)-(a.gf-a.ga)||b.gf-a.gf);
 };
+
+// ── TOURNAMENT SCHEDULING (pure, no React state — reads config directly from tournament object) ──
+const fmtTimeHM=m=>{const hh=Math.floor(m/60),mm=m%60;return`${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;};
+const computeTournamentSchedule=(t)=>{
+  const fields=t.fields||1;
+  const startTime=t.startTime||"10:00";
+  const pauseMin=t.pauseMin??t.defaultPause??2;
+  const slotPauses=t.slotPauses||{};
+  const [h,m]=startTime.split(":").map(Number);
+  const startMin=(h||0)*60+(m||0);
+  const matches=[...t.matches];
+  const n=matches.length;
+  if(n===0) return [];
+  const teamDeg={};
+  matches.forEach(mt=>{teamDeg[mt.homeId]=(teamDeg[mt.homeId]||0)+1;teamDeg[mt.awayId]=(teamDeg[mt.awayId]||0)+1;});
+  const sorted=[...matches].sort((a,b)=>((teamDeg[b.homeId]+teamDeg[b.awayId])-(teamDeg[a.homeId]+teamDeg[a.awayId])));
+  const minRounds=Math.ceil(n/fields);
+  let assignment=null;
+  for(let maxR=minRounds;maxR<=n&&!assignment;maxR++){
+    const asgn=new Array(n).fill(-1);
+    const roundTeams={};
+    const roundCnt={};
+    const bt=(idx)=>{
+      if(idx===n) return true;
+      const {homeId,awayId}=sorted[idx];
+      for(let r=0;r<maxR;r++){
+        const busy=roundTeams[r]||(roundTeams[r]=new Set());
+        const cnt=roundCnt[r]||0;
+        if(!busy.has(homeId)&&!busy.has(awayId)&&cnt<fields){
+          busy.add(homeId);busy.add(awayId);
+          roundCnt[r]=cnt+1;
+          asgn[idx]=r;
+          if(bt(idx+1)) return true;
+          busy.delete(homeId);busy.delete(awayId);
+          roundCnt[r]=cnt;
+          asgn[idx]=-1;
+        }
+      }
+      return false;
+    };
+    if(bt(0)) assignment={asgn,sorted};
+  }
+  if(!assignment) return [];
+  const slots=[];
+  const fieldUsed={};
+  assignment.asgn.forEach((r,i)=>{
+    fieldUsed[r]=(fieldUsed[r]||0)+1;
+    slots.push({match:assignment.sorted[i],field:fieldUsed[r],round:r});
+  });
+  const maxRound=slots.reduce((mx,s)=>Math.max(mx,s.round),-1);
+  let cumMin=startMin;
+  const roundStart={};
+  for(let r=0;r<=maxRound;r++){
+    roundStart[r]=cumMin;
+    const pause=slotPauses[r]??pauseMin;
+    cumMin+=t.matchDuration+pause;
+  }
+  return slots.map(s=>({...s,startMin:roundStart[s.round]})).sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
+};
+
+// ── TOURNAMENT PDF SECTIONS (pure — builds Teams/Zeitplan/Übersicht HTML for one tournament) ──
+const escHtml=s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const legLabel=leg=>leg===2?`<span style="font-size:9px;font-weight:800;padding:1px 6px;border-radius:10px;background:#f3e8ff;color:#7c3aed;margin-left:4px">RÜCK</span>`:``;
+function buildTournamentPdfSections(t,coaches=[]){
+  const fields=t.fields||1;
+  const gt=id=>t.teams.find(x=>x.id===id);
+  const schedule=computeTournamentSchedule(t);
+  const coachAssign=t.coachAssign||{};
+  const hasRueckrunde=t.matches.some(m=>m.leg===2);
+  const meta=`📅 ${escHtml(fmtDate(t.date))} · 👥 ${t.teams.length} Teams · ⏱ ${t.matchDuration} Min/Spiel · ⚽ ${fields} Feld${fields>1?"er":""} · 🏟 ${t.matches.length} Spiele${hasRueckrunde?" · 🔁 Hin- &amp; Rückrunde":""}`;
+
+  // Teams
+  const teamsHtml=t.teams.map(team=>{
+    const tm=t.matches.filter(m=>m.homeId===team.id||m.awayId===team.id)
+      .map(m=>({m,slot:schedule.find(s=>s.match.id===m.id)}))
+      .sort((a,b)=>(a.slot?.startMin??9999)-(b.slot?.startMin??9999));
+    const rows=tm.map(({m,slot})=>{
+      const isHome=m.homeId===team.id;
+      const opp=gt(isHome?m.awayId:m.homeId);
+      const res=m.played?`<span style="font-weight:800;color:#166534">${m.homeScore}:${m.awayScore}</span>`:`<span style="color:#9ca3af">offen</span>`;
+      return`<tr><td style="padding:5px 8px;font-weight:700;white-space:nowrap">${slot?fmtTimeHM(slot.startMin):"–"}${legLabel(m.leg)}</td><td style="padding:5px 8px;white-space:nowrap">${fields>1&&slot?`Feld ${slot.field}`:""}</td><td style="padding:5px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${opp?.color||"#ccc"};margin-right:5px"></span>vs. ${escHtml(opp?.name)}</td><td style="padding:5px 8px;text-align:right">${res}</td></tr>`;
+    }).join("");
+    return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:12px;overflow:hidden;page-break-inside:avoid">
+      <div style="padding:9px 14px;background:${team.color}18;border-bottom:1px solid ${team.color}44;display:flex;align-items:center;gap:8px">
+        <span style="width:13px;height:13px;border-radius:50%;background:${team.color};display:inline-block;flex-shrink:0"></span>
+        <span style="font-weight:800;font-size:14px">${escHtml(team.name)}</span>
+        ${team.club?`<span style="font-size:11px;color:#6b7280">· 🏛 ${escHtml(team.club)}</span>`:""}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">${rows}</table>
+    </div>`;
+  }).join("");
+
+  // Zeitplan
+  const sortedSlots=[...schedule].sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
+  const zpRows=sortedSlots.map(sl=>{
+    const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
+    const res=sl.match.played?`<span style="font-weight:800;color:#166534">${sl.match.homeScore}:${sl.match.awayScore}</span>`:`<span style="color:#9ca3af">–</span>`;
+    return`<tr><td style="padding:6px 8px;font-weight:800;white-space:nowrap">${fmtTimeHM(sl.startMin)}${legLabel(sl.match.leg)}</td><td style="padding:6px 8px;white-space:nowrap">${fields>1?`⚽ Feld ${sl.field}`:""}</td><td style="padding:6px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${h?.color||"#ccc"};margin-right:5px"></span><strong>${escHtml(h?.name)}</strong></td><td style="padding:6px 8px;text-align:center;color:#94a3b8">vs.</td><td style="padding:6px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${a?.color||"#ccc"};margin-right:5px"></span><strong>${escHtml(a?.name)}</strong></td><td style="padding:6px 8px;text-align:right">${res}</td></tr>`;
+  }).join("");
+  const zpHtml=`<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>${["Zeit","Feld","Heim","","Gast","Ergebnis"].map(h=>`<th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}</tr></thead><tbody>${zpRows}</tbody></table>`;
+
+  // Übersicht
+  const rows3=schedule.reduce((rs,sl)=>{
+    const last=rs[rs.length-1];
+    if(!last||last.startMin!==sl.startMin) rs.push({startMin:sl.startMin,slots:[]});
+    rs[rs.length-1].slots.push(sl);
+    return rs;
+  },[]);
+  const ueHtml=rows3.map(row=>{
+    const allTeamIds=[...new Set(row.slots.flatMap(sl=>[sl.match.homeId,sl.match.awayId]))];
+    const allTeams=allTeamIds.map(gt).filter(Boolean);
+    const kidCount=allTeams.reduce((s,tm)=>s+(t.teamSizes?.[tm.id]||tm.players?.length||t.defaultTeamSize||4),0);
+    const cells=row.slots.map(sl=>{
+      const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
+      const coach=coachAssign[sl.field-1]?coaches.find(c=>c.id===coachAssign[sl.field-1]):null;
+      return`<div style="flex:1;min-width:140px;padding:8px 10px;border-left:1px solid #e2e8f0">
+        <div style="font-size:10px;font-weight:800;color:#64748b;margin-bottom:4px">⚽ Feld ${sl.field}${coach?` · 🧑‍🏫 ${escHtml(coach.name)}`:""}${legLabel(sl.match.leg)}</div>
+        <div style="font-size:12px;font-weight:700"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${h?.color||"#ccc"};margin-right:4px"></span>${escHtml(h?.name)}</div>
+        <div style="font-size:9px;color:#94a3b8;padding-left:12px">vs.</div>
+        <div style="font-size:12px;font-weight:700"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${a?.color||"#ccc"};margin-right:4px"></span>${escHtml(a?.name)}</div>
+      </div>`;
+    }).join("");
+    return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:10px;overflow:hidden;page-break-inside:avoid">
+      <div style="padding:8px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-weight:800;font-size:14px">${fmtTimeHM(row.startMin)}</span>
+        <span style="font-size:11px;color:#64748b">⏱ ${t.matchDuration} Min</span>
+        <span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#dbeafe;color:#1d4ed8">👥 ${kidCount} Kinder aktiv</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap">${cells}</div>
+    </div>`;
+  }).join("");
+
+  return {meta,teamsHtml,zpHtml,ueHtml};
+}
 
 // ── CLAUDE API ────────────────────────────────────────────────────
 async function callClaude(messages,apiKey,system) {
@@ -3188,7 +3322,7 @@ function TrainingSetupModal({players,coaches,onPlanManual,onPlanKI,onClose,initi
 
 // ── TURNIER PAGE ──────────────────────────────────────────────────
 function TournamentForm({onSave,onClose}) {
-  const [form,setForm]=useState({name:"",date:todayISO(),matchDuration:8,fields:1,notes:"",defaultTeamSize:4,defaultPause:2});
+  const [form,setForm]=useState({name:"",date:todayISO(),matchDuration:8,fields:1,notes:"",defaultTeamSize:4,defaultPause:2,startTime:"10:00"});
   // Club setup: {name, count}
   const [clubs,setClubs]=useState([{id:uid(),name:"",count:1}]);
   // Derived teams (generated from clubs)
@@ -3250,6 +3384,7 @@ function TournamentForm({onSave,onClose}) {
     <div style={{marginBottom:14}}>
       <Inp label="Datum" type="date" value={form.date} onChange={e=>set("date",e.target.value)}/>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Startzeit</label><input type="time" value={form.startTime} onChange={e=>set("startTime",e.target.value)} style={{width:"100%",padding:"8px 12px",border:`1.5px solid ${C.border}`,borderRadius:8,fontSize:14,outline:"none",fontFamily:"inherit"}}/></div>
         <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Spieldauer (Min)</label><Stepper value={form.matchDuration} onChange={v=>set("matchDuration",v)} min={3} max={30}/></div>
         <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Felder</label><Stepper value={form.fields} onChange={v=>set("fields",v)} min={1} max={6}/></div>
         <div><label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:.6}}>Kinder/Team</label><Stepper value={form.defaultTeamSize} onChange={v=>set("defaultTeamSize",v)} min={1} max={12}/></div>
@@ -3360,8 +3495,91 @@ function TournamentForm({onSave,onClose}) {
       <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
       <Btn onClick={()=>{
         if(!form.name.trim()||teams.length<2)return;
-        onSave({...form,id:uid(),createdAt:now(),teams,excludePairs,clubOverrides,matches:generateRR(teams,excludePairs,clubOverrides)});
+        onSave({...form,id:uid(),createdAt:now(),teams,excludePairs,clubOverrides,matches:generateRR(teams,excludePairs,clubOverrides).map(m=>({...m,leg:1}))});
       }} disabled={teams.length<2}>Turnier erstellen</Btn>
+    </div>
+  </div>);
+}
+
+function RueckrundeForm({teams,baseExcludePairs,baseClubOverrides,onSave,onClose}) {
+  const [mode,setMode]=useState("same"); // same | custom
+  const [excludePairs,setExcludePairs]=useState(baseExcludePairs);
+  const [clubOverrides,setClubOverrides]=useState(baseClubOverrides);
+  const togglePair=(a,b)=>{
+    const key=[a,b].sort().join("|");
+    setExcludePairs(prev=>prev.some(p=>p.sort().join("|")===key)?prev.filter(p=>p.sort().join("|")!==key):[...prev,[a,b]]);
+  };
+  const isPairExcluded=(a,b)=>excludePairs.some(p=>p.sort().join("|")===[a,b].sort().join("|"));
+  const sameClubPairs=[];
+  teams.forEach((t1,i)=>teams.forEach((t2,j)=>{
+    if(i>=j)return;
+    if(t1.club&&t2.club&&t1.club.trim()&&t1.club.trim()===t2.club.trim())
+      sameClubPairs.push([t1.id,t2.id]);
+  }));
+  const allExcluded=[...excludePairs,...sameClubPairs];
+  const effectiveMatches=()=>{
+    const excl=new Set([...excludePairs,...sameClubPairs].map(([a,b])=>[a,b].sort().join("|")));
+    clubOverrides.forEach(k=>excl.delete(k));
+    let c=0;
+    for(let i=0;i<teams.length;i++) for(let j=i+1;j<teams.length;j++)
+      if(!excl.has([teams[i].id,teams[j].id].sort().join("|"))) c++;
+    return c;
+  };
+  return(<div>
+    <div style={{background:"#f0f9ff",borderRadius:10,padding:"10px 14px",marginBottom:16,border:"1px solid #bae6fd",fontSize:13,color:"#0369a1"}}>
+      Erstellt eine zweite Runde (Rückrunde) zusätzlich zur bestehenden Hinrunde. Die Tabelle summiert danach automatisch beide Runden.
+    </div>
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+      <div onClick={()=>setMode("same")} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderRadius:10,border:`1.5px solid ${mode==="same"?C.primary:C.border}`,background:mode==="same"?C.accentL:"white",cursor:"pointer"}}>
+        <div style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${mode==="same"?C.primary:C.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{mode==="same"&&<div style={{width:9,height:9,borderRadius:"50%",background:C.primary}}/>}</div>
+        <div><div style={{fontWeight:700,fontSize:14,color:C.text}}>Gleiche Kriterien</div><div style={{fontSize:12,color:C.muted}}>Gleiche Paarungen wie Hinrunde, Heim/Auswärts getauscht</div></div>
+      </div>
+      <div onClick={()=>setMode("custom")} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderRadius:10,border:`1.5px solid ${mode==="custom"?C.primary:C.border}`,background:mode==="custom"?C.accentL:"white",cursor:"pointer"}}>
+        <div style={{width:18,height:18,borderRadius:"50%",border:`2px solid ${mode==="custom"?C.primary:C.border}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{mode==="custom"&&<div style={{width:9,height:9,borderRadius:"50%",background:C.primary}}/>}</div>
+        <div><div style={{fontWeight:700,fontSize:14,color:C.text}}>Veränderte Kriterien</div><div style={{fontSize:12,color:C.muted}}>Neue Paarungen mit angepassten Ausschlüssen erstellen</div></div>
+      </div>
+    </div>
+    {mode==="custom"&&<div style={{marginBottom:14}}>
+      <label style={{display:"block",fontSize:12,fontWeight:700,color:C.muted,marginBottom:8,textTransform:"uppercase",letterSpacing:.6}}>Paarungen für die Rückrunde</label>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {teams.map((t1,i)=>teams.slice(i+1).map(t2=>{
+          const excl=isPairExcluded(t1.id,t2.id);
+          const sameClub=t1.club&&t2.club&&t1.club.trim()&&t1.club.trim()===t2.club.trim();
+          const key=[t1.id,t2.id].sort().join("|");
+          const overridden=clubOverrides.includes(key);
+          if(sameClub) return(
+            <div key={key} onClick={()=>setClubOverrides(prev=>overridden?prev.filter(k=>k!==key):[...prev,key])}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${overridden?"#bbf7d0":"#bfdbfe"}`,background:overridden?"#f0fdf4":"#eff6ff",cursor:"pointer"}}>
+              <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${overridden?"#16a34a":"#3b82f6"}`,background:overridden?"#16a34a":"#3b82f6",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{color:"white",fontSize:10,lineHeight:1}}>{overridden?"✓":"🏛"}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t1.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t1.name}</span>
+                <span style={{color:C.muted,fontSize:12}}>vs</span>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t2.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t2.name}</span>
+              </div>
+              <span style={{fontSize:11,fontWeight:700,color:overridden?"#16a34a":"#1e40af"}}>{overridden?"✓ Wird gespielt":"🏛 Gleicher Verein"}</span>
+            </div>);
+          return(
+            <div key={key} onClick={()=>togglePair(t1.id,t2.id)}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${excl?"#fca5a5":C.border}`,background:excl?"#fff5f5":"white",cursor:"pointer"}}>
+              <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${excl?"#ef4444":C.border}`,background:excl?"#ef4444":"white",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {excl&&<span style={{color:"white",fontSize:11,lineHeight:1}}>✕</span>}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t1.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t1.name}</span>
+                <span style={{color:C.muted,fontSize:12}}>vs</span>
+                <span style={{display:"inline-block",width:10,height:10,borderRadius:"50%",background:t2.color}}/><span style={{fontSize:13,fontWeight:600,color:C.text}}>{t2.name}</span>
+              </div>
+              {excl&&<span style={{fontSize:11,color:"#ef4444",fontWeight:700}}>Ausgeschlossen</span>}
+            </div>);
+        }))}
+      </div>
+      <div style={{fontSize:12,color:C.muted,marginTop:10}}>→ {effectiveMatches()} Spiele in der Rückrunde{allExcluded.length-clubOverrides.length>0?`, ${allExcluded.length-clubOverrides.length} Paar${allExcluded.length-clubOverrides.length>1?"e":""} ausgeschlossen`:""}</div>
+    </div>}
+    <div style={{display:"flex",gap:10,justifyContent:"flex-end",paddingTop:16,borderTop:`1px solid ${C.border}`}}>
+      <Btn onClick={onClose} variant="secondary">Abbrechen</Btn>
+      <Btn onClick={()=>onSave({mode,excludePairs,clubOverrides})}>Rückrunde erstellen</Btn>
     </div>
   </div>);
 }
@@ -3384,159 +3602,40 @@ function PauseEditor({round,value,defaultVal,isCustom,onChange}) {
 function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[],toast}) {
   const [tab,setTab]=useState("plan");
   const [sc,setSc]=useState(Object.fromEntries(t.matches.map(m=>[m.id,{h:m.homeScore??0,a:m.awayScore??0}])));
-  const [startTime,setStartTime]=useState("10:00");
-  const [pauseMin,setPauseMin]=useState(t.defaultPause??2);
-  const [slotPauses,setSlotPauses]=useState({}); // round -> custom pause in minutes
+  // Startzeit/Pause/Trainer-Zuweisung werden aus dem Turnier initialisiert UND bei jeder Änderung sofort zurückgeschrieben,
+  // damit sie beim Verlassen/Wiederöffnen des Turniers erhalten bleiben (statt immer auf Default zu resetten).
+  const [startTime,setStartTimeLocal]=useState(t.startTime||"10:00");
+  const [pauseMin,setPauseMinLocal]=useState(t.pauseMin??t.defaultPause??2);
+  const [slotPauses,setSlotPausesLocal]=useState(t.slotPauses||{});
+  const [coachAssign,setCoachAssignLocal]=useState(t.coachAssign||{});
+  const setStartTime=v=>{setStartTimeLocal(v);onUpdate({...t,startTime:v});};
+  const setPauseMin=v=>{setPauseMinLocal(v);onUpdate({...t,pauseMin:v});};
+  const setSlotPauses=fn=>{setSlotPausesLocal(prev=>{const next=typeof fn==="function"?fn(prev):fn;onUpdate({...t,slotPauses:next});return next;});};
+  const assignCoach=(fi,cid)=>{setCoachAssignLocal(a=>{const next={...a,[fi]:cid};onUpdate({...t,coachAssign:next});return next;});};
+  const [rueckrundeModal,setRueckrundeModal]=useState(false);
   const gt=id=>t.teams.find(x=>x.id===id);
   const fields=t.fields||1;
   const adjScore=(mId,side,delta)=>setSc(s=>({...s,[mId]:{...s[mId],[side]:Math.max(0,(s[mId]?.[side]||0)+delta)}}));
   const save=mId=>{ const s=sc[mId],h=Number(s.h),a=Number(s.a);if(isNaN(h)||isNaN(a))return;onUpdate({...t,matches:t.matches.map(m=>m.id===mId?{...m,homeScore:h,awayScore:a,played:true}:m)}); };
   const standings=calcStandings(t.teams,t.matches);
   const played=t.matches.filter(m=>m.played).length;
-  const buildSchedule=()=>{
-    const [h,m]=startTime.split(":").map(Number);
-    const startMin=h*60+m;
-    // slotDur is used for base calculation; individual rounds can have custom pauses via slotPauses
-
-    // Optimal conflict-free scheduler via iterative deepening backtracking.
-    // Sorts matches by "hardest to place first" then tries min rounds, then +1 etc.
-    const matches=[...t.matches];
-    const n=matches.length;
-    // Sort: most-connected teams first (harder to schedule)
-    const teamDeg={};
-    matches.forEach(m=>{teamDeg[m.homeId]=(teamDeg[m.homeId]||0)+1;teamDeg[m.awayId]=(teamDeg[m.awayId]||0)+1;});
-    const sorted=[...matches].sort((a,b)=>((teamDeg[b.homeId]+teamDeg[b.awayId])-(teamDeg[a.homeId]+teamDeg[a.awayId])));
-
-    const minRounds=Math.ceil(n/fields);
-    let assignment=null;
-
-    for(let maxR=minRounds;maxR<=n&&!assignment;maxR++){
-      const asgn=new Array(n).fill(-1);
-      const roundTeams={};  // round -> Set
-      const roundCnt={};    // round -> count
-
-      const bt=(idx)=>{
-        if(idx===n) return true;
-        const {homeId,awayId}=sorted[idx];
-        for(let r=0;r<maxR;r++){
-          const busy=roundTeams[r]||(roundTeams[r]=new Set());
-          const cnt=roundCnt[r]||0;
-          if(!busy.has(homeId)&&!busy.has(awayId)&&cnt<fields){
-            busy.add(homeId);busy.add(awayId);
-            roundCnt[r]=cnt+1;
-            asgn[idx]=r;
-            if(bt(idx+1)) return true;
-            busy.delete(homeId);busy.delete(awayId);
-            roundCnt[r]=cnt;
-            asgn[idx]=-1;
-          }
-        }
-        return false;
-      };
-
-      if(bt(0)) assignment={asgn,sorted};
-    }
-
-    if(!assignment) return []; // fallback (shouldn't happen)
-
-    const slots=[];
-    const fieldUsed={};
-    assignment.asgn.forEach((r,i)=>{
-      fieldUsed[r]=(fieldUsed[r]||0)+1;
-      slots.push({match:assignment.sorted[i],field:fieldUsed[r],round:r});
-    });
-    // Compute cumulative startMin with per-round custom pauses
-    const maxRound=slots.reduce((mx,s)=>Math.max(mx,s.round),-1);
-    let cumMin=startMin;
-    const roundStart={};
-    for(let r=0;r<=maxRound;r++){
-      roundStart[r]=cumMin;
-      const pause=slotPauses[r]??pauseMin;
-      cumMin+=t.matchDuration+pause;
-    }
-    return slots.map(s=>({...s,startMin:roundStart[s.round]})).sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
-  };
-  const fmtTime=m=>{const hh=Math.floor(m/60),mm=m%60;return`${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")}`;};
+  const hasRueckrunde=t.matches.some(m=>m.leg===2);
+  // Live-Vorschau (übernimmt sofortige lokale Änderungen, auch bevor onUpdate zurückgespiegelt wurde)
+  const buildSchedule=()=>computeTournamentSchedule({...t,startTime,pauseMin,slotPauses});
+  const fmtTime=fmtTimeHM;
   const [expandedField,setExpandedField]=useState(null);
-  const [coachAssign,setCoachAssign]=useState({}); // fieldIdx → coachId
-  const assignCoach=(fi,cid)=>setCoachAssign(a=>({...a,[fi]:cid}));
   const tb=(k,l)=><button onClick={()=>setTab(k)} style={{padding:"7px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}</button>;
 
   // ── PDF: Teams + Zeitplan + Übersicht zusammengefasst ──────────
   const printTournament=()=>{
-    const esc=s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const schedule=buildSchedule();
-
-    // Header / Meta
-    const meta=`📅 ${esc(fmtDate(t.date))} · 👥 ${t.teams.length} Teams · ⏱ ${t.matchDuration} Min/Spiel · ⚽ ${fields} Feld${fields>1?"er":""} · 🏟 ${t.matches.length} Spiele`;
-
-    // ── Sektion 1: Teams (wer spielt wann gegen wen) ──
-    const teamsHtml=t.teams.map(team=>{
-      const tm=t.matches.filter(m=>m.homeId===team.id||m.awayId===team.id)
-        .map(m=>({m,slot:schedule.find(s=>s.match.id===m.id)}))
-        .sort((a,b)=>(a.slot?.startMin??9999)-(b.slot?.startMin??9999));
-      const rows=tm.map(({m,slot})=>{
-        const isHome=m.homeId===team.id;
-        const opp=gt(isHome?m.awayId:m.homeId);
-        const res=m.played?`<span style="font-weight:800;color:#166534">${m.homeScore}:${m.awayScore}</span>`:`<span style="color:#9ca3af">offen</span>`;
-        return`<tr><td style="padding:5px 8px;font-weight:700;white-space:nowrap">${slot?fmtTime(slot.startMin):"–"}</td><td style="padding:5px 8px;white-space:nowrap">${fields>1&&slot?`Feld ${slot.field}`:""}</td><td style="padding:5px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${opp?.color||"#ccc"};margin-right:5px"></span>vs. ${esc(opp?.name)}</td><td style="padding:5px 8px;text-align:right">${res}</td></tr>`;
-      }).join("");
-      return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:12px;overflow:hidden;page-break-inside:avoid">
-        <div style="padding:9px 14px;background:${team.color}18;border-bottom:1px solid ${team.color}44;display:flex;align-items:center;gap:8px">
-          <span style="width:13px;height:13px;border-radius:50%;background:${team.color};display:inline-block;flex-shrink:0"></span>
-          <span style="font-weight:800;font-size:14px">${esc(team.name)}</span>
-          ${team.club?`<span style="font-size:11px;color:#6b7280">· 🏛 ${esc(team.club)}</span>`:""}
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:12px">${rows}</table>
-      </div>`;
-    }).join("");
-
-    // ── Sektion 2: Zeitplan (chronologische Spielliste) ──
-    const sortedSlots=[...schedule].sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
-    const zpRows=sortedSlots.map(sl=>{
-      const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
-      const res=sl.match.played?`<span style="font-weight:800;color:#166534">${sl.match.homeScore}:${sl.match.awayScore}</span>`:`<span style="color:#9ca3af">–</span>`;
-      return`<tr><td style="padding:6px 8px;font-weight:800;white-space:nowrap">${fmtTime(sl.startMin)}</td><td style="padding:6px 8px;white-space:nowrap">${fields>1?`⚽ Feld ${sl.field}`:""}</td><td style="padding:6px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${h?.color||"#ccc"};margin-right:5px"></span><strong>${esc(h?.name)}</strong></td><td style="padding:6px 8px;text-align:center;color:#94a3b8">vs.</td><td style="padding:6px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${a?.color||"#ccc"};margin-right:5px"></span><strong>${esc(a?.name)}</strong></td><td style="padding:6px 8px;text-align:right">${res}</td></tr>`;
-    }).join("");
-    const zpHtml=`<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>${["Zeit","Feld","Heim","","Gast","Ergebnis"].map(h=>`<th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}</tr></thead><tbody>${zpRows}</tbody></table>`;
-
-    // ── Sektion 3: Übersicht (Zeitslots mit gleichzeitigen Spielen, Kinderzahl, Trainer) ──
-    const rows3=schedule.reduce((rs,sl)=>{
-      const last=rs[rs.length-1];
-      if(!last||last.startMin!==sl.startMin) rs.push({startMin:sl.startMin,slots:[]});
-      rs[rs.length-1].slots.push(sl);
-      return rs;
-    },[]);
-    const ueHtml=rows3.map(row=>{
-      const allTeamIds=[...new Set(row.slots.flatMap(sl=>[sl.match.homeId,sl.match.awayId]))];
-      const allTeams=allTeamIds.map(gt).filter(Boolean);
-      const kidCount=allTeams.reduce((s,tm)=>s+(t.teamSizes?.[tm.id]||tm.players?.length||t.defaultTeamSize||4),0);
-      const cells=row.slots.map(sl=>{
-        const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
-        const coach=coachAssign[sl.field-1]?coaches.find(c=>c.id===coachAssign[sl.field-1]):null;
-        return`<div style="flex:1;min-width:140px;padding:8px 10px;border-left:1px solid #e2e8f0">
-          <div style="font-size:10px;font-weight:800;color:#64748b;margin-bottom:4px">⚽ Feld ${sl.field}${coach?` · 🧑‍🏫 ${esc(coach.name)}`:""}</div>
-          <div style="font-size:12px;font-weight:700"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${h?.color||"#ccc"};margin-right:4px"></span>${esc(h?.name)}</div>
-          <div style="font-size:9px;color:#94a3b8;padding-left:12px">vs.</div>
-          <div style="font-size:12px;font-weight:700"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${a?.color||"#ccc"};margin-right:4px"></span>${esc(a?.name)}</div>
-        </div>`;
-      }).join("");
-      return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:10px;overflow:hidden;page-break-inside:avoid">
-        <div style="padding:8px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span style="font-weight:800;font-size:14px">${fmtTime(row.startMin)}</span>
-          <span style="font-size:11px;color:#64748b">⏱ ${t.matchDuration} Min</span>
-          <span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#dbeafe;color:#1d4ed8">👥 ${kidCount} Kinder aktiv</span>
-        </div>
-        <div style="display:flex;flex-wrap:wrap">${cells}</div>
-      </div>`;
-    }).join("");
-
+    const liveT={...t,startTime,pauseMin,slotPauses,coachAssign};
+    const {meta,teamsHtml,zpHtml,ueHtml}=buildTournamentPdfSections(liveT,coaches);
     const css=`${PDF_CSS}
       .sec-title{font-size:16px;font-weight:900;margin:22px 0 12px;padding-top:14px;border-top:2px solid #e2e8f0}
       .sec-title:first-of-type{border-top:none;margin-top:0;padding-top:0}
       @media print{.pagebreak{page-break-before:always}}`;
-    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>${esc(t.name)} – Turnierplan</title><style>${css}</style></head><body>
-      <h1>🏆 ${esc(t.name)}</h1>
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>${escHtml(t.name)} – Turnierplan</title><style>${css}</style></head><body>
+      <h1>🏆 ${escHtml(t.name)}</h1>
       <div class="meta">${meta}</div>
       <div class="sec-title">👥 Teams &amp; Spielplan pro Team</div>
       ${teamsHtml}
@@ -3550,16 +3649,35 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[],toast}) {
     openPdf(html,`Turnierplan_${(t.name||"Turnier").replace(/[^a-z0-9]+/gi,"_")}_${t.date||todayISO()}.html`,toast);
   };
 
+  // ── Rückrunde erstellen (Hin-/Rückrunde) ──────────────────────
+  const createRueckrunde=({mode,excludePairs,clubOverrides})=>{
+    let leg2;
+    if(mode==="same"){
+      // Gleiche Paarungen, Heim/Auswärts getauscht
+      leg2=t.matches.filter(m=>m.leg!==2).map(m=>({id:uid(),homeId:m.awayId,awayId:m.homeId,homeScore:null,awayScore:null,played:false,leg:2}));
+    } else {
+      // Neue Paarungen nach angepassten Ausschlusskriterien
+      leg2=generateRR(t.teams,excludePairs,clubOverrides).map(m=>({...m,leg:2}));
+    }
+    const leg1=t.matches.filter(m=>m.leg!==2).map(m=>({...m,leg:m.leg||1}));
+    onUpdate({...t,matches:[...leg1,...leg2]});
+    setSc(s=>({...s,...Object.fromEntries(leg2.map(m=>[m.id,{h:0,a:0}]))}));
+    setRueckrundeModal(false);
+    toast?.("Rückrunde erstellt ✓");
+  };
+
   return(<div>
     <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,flexWrap:"wrap"}}>
       <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:14,display:"flex",alignItems:"center",gap:4}}>← Zurück</button>
-      <div style={{flex:1}}><h2 style={{margin:0,fontSize:20,fontWeight:900,color:C.text}}>{t.name}</h2><div style={{fontSize:13,color:C.muted}}>{fmtDate(t.date)} · {t.teams.length} Teams · {played}/{t.matches.length} Spiele · {t.matchDuration} Min/Spiel</div></div>
+      <div style={{flex:1}}><h2 style={{margin:0,fontSize:20,fontWeight:900,color:C.text}}>{t.name}</h2><div style={{fontSize:13,color:C.muted}}>{fmtDate(t.date)} · {t.teams.length} Teams · {played}/{t.matches.length} Spiele · {t.matchDuration} Min/Spiel{hasRueckrunde?" · 🔁 Hin- & Rückrunde":""}</div></div>
+      {!hasRueckrunde&&<Btn sm variant="secondary" onClick={()=>setRueckrundeModal(true)}>🔁 Rückrunde erstellen</Btn>}
       <Btn sm variant="secondary" onClick={printTournament}>🖨️ Turnierplan PDF</Btn>
     </div>
+    {rueckrundeModal&&<Modal title="Rückrunde erstellen" onClose={()=>setRueckrundeModal(false)} wide><RueckrundeForm teams={t.teams} baseExcludePairs={t.excludePairs||[]} baseClubOverrides={t.clubOverrides||[]} onSave={createRueckrunde} onClose={()=>setRueckrundeModal(false)}/></Modal>}
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content",flexWrap:"wrap"}}>{tb("plan","Spielplan")}{tb("teams","Teams")}{tb("schedule","Zeitplan")}{tb("uebersicht","Übersicht")}{tb("table","Tabelle")}</div>
     {tab==="plan"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
       {t.matches.map((m,i)=>{ const field=(i%fields)+1; const h=gt(m.homeId),a=gt(m.awayId);if(!h||!a)return null;return(<div key={m.id} style={{background:C.card,borderRadius:10,border:`1.5px solid ${m.played?"#22c55e":C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <div style={{fontSize:12,color:C.muted,fontWeight:600,minWidth:60}}>#{i+1}{fields>1&&` · F${field}`}</div>
+        <div style={{fontSize:12,color:C.muted,fontWeight:600,minWidth:60}}>#{i+1}{fields>1&&` · F${field}`}{hasRueckrunde&&<span style={{marginLeft:6,fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:10,background:m.leg===2?"#f3e8ff":"#eff6ff",color:m.leg===2?"#7c3aed":"#1d4ed8"}}>{m.leg===2?"RÜCK":"HIN"}</span>}</div>
         <div style={{display:"flex",alignItems:"center",gap:10,flex:1,justifyContent:"center",flexWrap:"wrap"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,fontWeight:700,fontSize:15}}><div style={{width:12,height:12,borderRadius:"50%",background:h.color}}/>{h.name}</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -3602,6 +3720,7 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[],toast}) {
                 return(<div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 10px",borderRadius:8,background:m.played?"#f8fafc":"white",border:`1px solid ${C.border}`,flexWrap:"wrap"}}>
                   {slot&&<span style={{fontSize:11,fontWeight:700,color:C.muted,minWidth:40}}>{fmtTime(slot.startMin)}</span>}
                   {fields>1&&slot&&<span style={{fontSize:11,color:C.muted}}>F{slot.field}</span>}
+                  {hasRueckrunde&&<span style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:10,background:m.leg===2?"#f3e8ff":"#eff6ff",color:m.leg===2?"#7c3aed":"#1d4ed8"}}>{m.leg===2?"RÜCK":"HIN"}</span>}
                   <div style={{display:"flex",alignItems:"center",gap:6,flex:1}}>
                     <div style={{width:10,height:10,borderRadius:"50%",background:opp?.color,flexShrink:0}}/>
                     <span style={{fontWeight:600,fontSize:13,color:C.text}}>vs. {opp?.name}</span>
@@ -3742,16 +3861,60 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[],toast}) {
 function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[],onlineUsers,currentUser,toast}) {
   const [modal,setModal]=useState(null);
   const [open,setOpen]=useState(null);
+  const [selectMode,setSelectMode]=useState(false);
+  const [selected,setSelected]=useState([]);
   if(open){const t=tournaments.find(x=>x.id===open);if(!t){setOpen(null);return null;}return<TournamentDetail tournament={t} onUpdate={onSaveTournament} onBack={()=>setOpen(null)} coaches={coaches} toast={toast}/>;}
+  const toggleSel=id=>setSelected(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+  const exitSelectMode=()=>{setSelectMode(false);setSelected([]);};
+  const printMultiple=()=>{
+    const chosen=tournaments.filter(t=>selected.includes(t.id)).sort((a,b)=>new Date(a.date)-new Date(b.date));
+    if(chosen.length===0)return;
+    const css=`${PDF_CSS}
+      .sec-title{font-size:16px;font-weight:900;margin:22px 0 12px;padding-top:14px;border-top:2px solid #e2e8f0}
+      .tourn-title{font-size:20px;font-weight:900;margin:0 0 4px}
+      .pagebreak{}
+      @media print{.pagebreak{page-break-before:always}}`;
+    const body=chosen.map((t,i)=>{
+      const {meta,teamsHtml,zpHtml,ueHtml}=buildTournamentPdfSections(t,coaches);
+      return`<div class="${i>0?"pagebreak":""}">
+        <h1 class="tourn-title">🏆 ${escHtml(t.name)}</h1>
+        <div class="meta">${meta}</div>
+        <div class="sec-title" style="border-top:none;margin-top:0;padding-top:0">👥 Teams &amp; Spielplan pro Team</div>
+        ${teamsHtml}
+        <div class="sec-title">🗓 Zeitplan (chronologisch)</div>
+        ${zpHtml}
+        <div class="sec-title">📊 Übersicht (gleichzeitige Spiele)</div>
+        ${ueHtml}
+      </div>`;
+    }).join("");
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>Turnierpläne</title><style>${css}</style></head><body>
+      ${body}
+      <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
+      ${PDF_SCRIPT}
+    </body></html>`;
+    openPdf(html,`Turnierplaene_${chosen.length}-Turniere_${todayISO()}.html`,toast);
+    exitSelectMode();
+  };
   return(<div>
     <PageHeader title="Turnier" sub={`${tournaments.length} Turniere`} onlineUsers={onlineUsers} currentUser={currentUser}/>
-    <div style={{marginBottom:16}}><Btn onClick={()=>setModal({type:"create"})}><Plus size={16}/> Neues Turnier</Btn></div>
+    <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+      <Btn onClick={()=>setModal({type:"create"})}><Plus size={16}/> Neues Turnier</Btn>
+      {tournaments.length>1&&(selectMode?
+        <>
+          <Btn variant="secondary" onClick={exitSelectMode}>Abbrechen</Btn>
+          <Btn onClick={printMultiple} disabled={selected.length===0}>🖨️ PDF erstellen ({selected.length})</Btn>
+        </>
+        :<Btn variant="secondary" onClick={()=>setSelectMode(true)}>🖨️ Mehrere Turniere als PDF</Btn>
+      )}
+    </div>
     {tournaments.length===0?<Empty icon="🏆" title="Noch kein Turnier" sub="Plane ein Rundenturnier – intern oder mit externen Teams." onAdd={()=>setModal({type:"create"})} addLabel="Turnier erstellen"/>:
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:12}}>
         {[...tournaments].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(t=>{
           const pl=t.matches.filter(m=>m.played).length,done=pl===t.matches.length,leader=done?calcStandings(t.teams,t.matches)[0]:null;
-          return(<div key={t.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${done?"#22c55e":C.border}`,padding:"16px 18px",cursor:"pointer"}} onClick={()=>setOpen(t.id)}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}><div style={{fontWeight:800,fontSize:16,color:C.text}}>{t.name}</div><button onClick={e=>{e.stopPropagation();onDeleteTournament(t.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button></div>
+          const isSel=selected.includes(t.id);
+          return(<div key={t.id} style={{background:C.card,borderRadius:12,border:`1.5px solid ${isSel?C.primary:done?"#22c55e":C.border}`,padding:"16px 18px",cursor:"pointer",position:"relative"}} onClick={()=>selectMode?toggleSel(t.id):setOpen(t.id)}>
+            {selectMode&&<div style={{position:"absolute",top:12,right:12,width:20,height:20,borderRadius:5,border:`2px solid ${isSel?C.primary:C.border}`,background:isSel?C.primary:"white",display:"flex",alignItems:"center",justifyContent:"center"}}>{isSel&&<span style={{color:"white",fontSize:12,lineHeight:1}}>✓</span>}</div>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}><div style={{fontWeight:800,fontSize:16,color:C.text,paddingRight:selectMode?26:0}}>{t.name}</div>{!selectMode&&<button onClick={e=>{e.stopPropagation();onDeleteTournament(t.id);}} style={{background:"none",border:"none",cursor:"pointer",color:"#ef4444",padding:4}}><Trash2 size={14}/></button>}</div>
             <div style={{fontSize:13,color:C.muted,marginBottom:10}}>{fmtDate(t.date)} · {t.teams.length} Teams · {t.matchDuration} Min/Spiel</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>{t.teams.map(tm=><span key={tm.id} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:700,padding:"2px 8px",borderRadius:20,background:"#f1f5f9",color:C.text}}><span style={{width:8,height:8,borderRadius:"50%",background:tm.color,display:"inline-block"}}/>{tm.name}</span>)}</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}><div style={{fontSize:12,color:C.muted}}>{pl}/{t.matches.length} Spiele {done?"✅":""}</div>{leader&&<div style={{fontSize:12,fontWeight:700,color:C.primary}}>🥇 {leader.name}</div>}</div>
