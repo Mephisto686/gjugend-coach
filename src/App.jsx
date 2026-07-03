@@ -205,7 +205,7 @@ async function logActivity(user, action, detail="") {
   } catch(e) {}
 }
 
-const APP_VERSION = "3.9.4";
+const APP_VERSION = "3.9.5";
 const BUILTIN_CATS = {
   aufwaermen: { label:"Aufwärmen", emoji:"🔥", color:"#ea580c", bg:"#fff7ed", builtin:true },
   uebung:     { label:"Übung",     emoji:"⚽", color:"#2563eb", bg:"#eff6ff", builtin:true },
@@ -3381,7 +3381,7 @@ function PauseEditor({round,value,defaultVal,isCustom,onChange}) {
   </div>);
 }
 
-function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
+function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[],toast}) {
   const [tab,setTab]=useState("plan");
   const [sc,setSc]=useState(Object.fromEntries(t.matches.map(m=>[m.id,{h:m.homeScore??0,a:m.awayScore??0}])));
   const [startTime,setStartTime]=useState("10:00");
@@ -3461,10 +3461,100 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
   const [coachAssign,setCoachAssign]=useState({}); // fieldIdx → coachId
   const assignCoach=(fi,cid)=>setCoachAssign(a=>({...a,[fi]:cid}));
   const tb=(k,l)=><button onClick={()=>setTab(k)} style={{padding:"7px 16px",borderRadius:8,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,fontFamily:"inherit",background:tab===k?C.primary:"transparent",color:tab===k?"white":C.muted}}>{l}</button>;
+
+  // ── PDF: Teams + Zeitplan + Übersicht zusammengefasst ──────────
+  const printTournament=()=>{
+    const esc=s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const schedule=buildSchedule();
+
+    // Header / Meta
+    const meta=`📅 ${esc(fmtDate(t.date))} · 👥 ${t.teams.length} Teams · ⏱ ${t.matchDuration} Min/Spiel · ⚽ ${fields} Feld${fields>1?"er":""} · 🏟 ${t.matches.length} Spiele`;
+
+    // ── Sektion 1: Teams (wer spielt wann gegen wen) ──
+    const teamsHtml=t.teams.map(team=>{
+      const tm=t.matches.filter(m=>m.homeId===team.id||m.awayId===team.id)
+        .map(m=>({m,slot:schedule.find(s=>s.match.id===m.id)}))
+        .sort((a,b)=>(a.slot?.startMin??9999)-(b.slot?.startMin??9999));
+      const rows=tm.map(({m,slot})=>{
+        const isHome=m.homeId===team.id;
+        const opp=gt(isHome?m.awayId:m.homeId);
+        const res=m.played?`<span style="font-weight:800;color:#166534">${m.homeScore}:${m.awayScore}</span>`:`<span style="color:#9ca3af">offen</span>`;
+        return`<tr><td style="padding:5px 8px;font-weight:700;white-space:nowrap">${slot?fmtTime(slot.startMin):"–"}</td><td style="padding:5px 8px;white-space:nowrap">${fields>1&&slot?`Feld ${slot.field}`:""}</td><td style="padding:5px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${opp?.color||"#ccc"};margin-right:5px"></span>vs. ${esc(opp?.name)}</td><td style="padding:5px 8px;text-align:right">${res}</td></tr>`;
+      }).join("");
+      return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:12px;overflow:hidden;page-break-inside:avoid">
+        <div style="padding:9px 14px;background:${team.color}18;border-bottom:1px solid ${team.color}44;display:flex;align-items:center;gap:8px">
+          <span style="width:13px;height:13px;border-radius:50%;background:${team.color};display:inline-block;flex-shrink:0"></span>
+          <span style="font-weight:800;font-size:14px">${esc(team.name)}</span>
+          ${team.club?`<span style="font-size:11px;color:#6b7280">· 🏛 ${esc(team.club)}</span>`:""}
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">${rows}</table>
+      </div>`;
+    }).join("");
+
+    // ── Sektion 2: Zeitplan (chronologische Spielliste) ──
+    const sortedSlots=[...schedule].sort((a,b)=>a.startMin-b.startMin||a.field-b.field);
+    const zpRows=sortedSlots.map(sl=>{
+      const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
+      const res=sl.match.played?`<span style="font-weight:800;color:#166534">${sl.match.homeScore}:${sl.match.awayScore}</span>`:`<span style="color:#9ca3af">–</span>`;
+      return`<tr><td style="padding:6px 8px;font-weight:800;white-space:nowrap">${fmtTime(sl.startMin)}</td><td style="padding:6px 8px;white-space:nowrap">${fields>1?`⚽ Feld ${sl.field}`:""}</td><td style="padding:6px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${h?.color||"#ccc"};margin-right:5px"></span><strong>${esc(h?.name)}</strong></td><td style="padding:6px 8px;text-align:center;color:#94a3b8">vs.</td><td style="padding:6px 8px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${a?.color||"#ccc"};margin-right:5px"></span><strong>${esc(a?.name)}</strong></td><td style="padding:6px 8px;text-align:right">${res}</td></tr>`;
+    }).join("");
+    const zpHtml=`<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>${["Zeit","Feld","Heim","","Gast","Ergebnis"].map(h=>`<th style="padding:6px 8px;text-align:left;font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;border-bottom:2px solid #e2e8f0">${h}</th>`).join("")}</tr></thead><tbody>${zpRows}</tbody></table>`;
+
+    // ── Sektion 3: Übersicht (Zeitslots mit gleichzeitigen Spielen, Kinderzahl, Trainer) ──
+    const rows3=schedule.reduce((rs,sl)=>{
+      const last=rs[rs.length-1];
+      if(!last||last.startMin!==sl.startMin) rs.push({startMin:sl.startMin,slots:[]});
+      rs[rs.length-1].slots.push(sl);
+      return rs;
+    },[]);
+    const ueHtml=rows3.map(row=>{
+      const allTeamIds=[...new Set(row.slots.flatMap(sl=>[sl.match.homeId,sl.match.awayId]))];
+      const allTeams=allTeamIds.map(gt).filter(Boolean);
+      const kidCount=allTeams.reduce((s,tm)=>s+(t.teamSizes?.[tm.id]||tm.players?.length||t.defaultTeamSize||4),0);
+      const cells=row.slots.map(sl=>{
+        const h=gt(sl.match.homeId),a=gt(sl.match.awayId);
+        const coach=coachAssign[sl.field-1]?coaches.find(c=>c.id===coachAssign[sl.field-1]):null;
+        return`<div style="flex:1;min-width:140px;padding:8px 10px;border-left:1px solid #e2e8f0">
+          <div style="font-size:10px;font-weight:800;color:#64748b;margin-bottom:4px">⚽ Feld ${sl.field}${coach?` · 🧑‍🏫 ${esc(coach.name)}`:""}</div>
+          <div style="font-size:12px;font-weight:700"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${h?.color||"#ccc"};margin-right:4px"></span>${esc(h?.name)}</div>
+          <div style="font-size:9px;color:#94a3b8;padding-left:12px">vs.</div>
+          <div style="font-size:12px;font-weight:700"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${a?.color||"#ccc"};margin-right:4px"></span>${esc(a?.name)}</div>
+        </div>`;
+      }).join("");
+      return`<div style="border:1.5px solid #e2e8f0;border-radius:10px;margin-bottom:10px;overflow:hidden;page-break-inside:avoid">
+        <div style="padding:8px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-weight:800;font-size:14px">${fmtTime(row.startMin)}</span>
+          <span style="font-size:11px;color:#64748b">⏱ ${t.matchDuration} Min</span>
+          <span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:#dbeafe;color:#1d4ed8">👥 ${kidCount} Kinder aktiv</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap">${cells}</div>
+      </div>`;
+    }).join("");
+
+    const css=`${PDF_CSS}
+      .sec-title{font-size:16px;font-weight:900;margin:22px 0 12px;padding-top:14px;border-top:2px solid #e2e8f0}
+      .sec-title:first-of-type{border-top:none;margin-top:0;padding-top:0}
+      @media print{.pagebreak{page-break-before:always}}`;
+    const html=`<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><title>${esc(t.name)} – Turnierplan</title><style>${css}</style></head><body>
+      <h1>🏆 ${esc(t.name)}</h1>
+      <div class="meta">${meta}</div>
+      <div class="sec-title">👥 Teams &amp; Spielplan pro Team</div>
+      ${teamsHtml}
+      <div class="sec-title pagebreak">🗓 Zeitplan (chronologisch)</div>
+      ${zpHtml}
+      <div class="sec-title pagebreak">📊 Übersicht (gleichzeitige Spiele)</div>
+      ${ueHtml}
+      <div class="footer">Erstellt mit G-Jugend Coach App · ${new Date().toLocaleDateString("de-DE")}</div>
+      ${PDF_SCRIPT}
+    </body></html>`;
+    openPdf(html,`Turnierplan_${(t.name||"Turnier").replace(/[^a-z0-9]+/gi,"_")}_${t.date||todayISO()}.html`,toast);
+  };
+
   return(<div>
-    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20,flexWrap:"wrap"}}>
       <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.muted,fontSize:14,display:"flex",alignItems:"center",gap:4}}>← Zurück</button>
-      <div><h2 style={{margin:0,fontSize:20,fontWeight:900,color:C.text}}>{t.name}</h2><div style={{fontSize:13,color:C.muted}}>{fmtDate(t.date)} · {t.teams.length} Teams · {played}/{t.matches.length} Spiele · {t.matchDuration} Min/Spiel</div></div>
+      <div style={{flex:1}}><h2 style={{margin:0,fontSize:20,fontWeight:900,color:C.text}}>{t.name}</h2><div style={{fontSize:13,color:C.muted}}>{fmtDate(t.date)} · {t.teams.length} Teams · {played}/{t.matches.length} Spiele · {t.matchDuration} Min/Spiel</div></div>
+      <Btn sm variant="secondary" onClick={printTournament}>🖨️ Turnierplan PDF</Btn>
     </div>
     <div style={{display:"flex",gap:4,background:"#f1f5f9",borderRadius:10,padding:4,marginBottom:20,width:"fit-content",flexWrap:"wrap"}}>{tb("plan","Spielplan")}{tb("teams","Teams")}{tb("schedule","Zeitplan")}{tb("uebersicht","Übersicht")}{tb("table","Tabelle")}</div>
     {tab==="plan"&&<div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -3649,10 +3739,10 @@ function TournamentDetail({tournament:t,onUpdate,onBack,coaches=[]}) {
   </div>);
 }
 
-function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[],onlineUsers,currentUser}) {
+function TurnierPage({tournaments,onSaveTournament,onDeleteTournament,coaches=[],onlineUsers,currentUser,toast}) {
   const [modal,setModal]=useState(null);
   const [open,setOpen]=useState(null);
-  if(open){const t=tournaments.find(x=>x.id===open);if(!t){setOpen(null);return null;}return<TournamentDetail tournament={t} onUpdate={onSaveTournament} onBack={()=>setOpen(null)} coaches={coaches}/>;}
+  if(open){const t=tournaments.find(x=>x.id===open);if(!t){setOpen(null);return null;}return<TournamentDetail tournament={t} onUpdate={onSaveTournament} onBack={()=>setOpen(null)} coaches={coaches} toast={toast}/>;}
   return(<div>
     <PageHeader title="Turnier" sub={`${tournaments.length} Turniere`} onlineUsers={onlineUsers} currentUser={currentUser}/>
     <div style={{marginBottom:16}}><Btn onClick={()=>setModal({type:"create"})}><Plus size={16}/> Neues Turnier</Btn></div>
@@ -4676,7 +4766,7 @@ export default function App() {
       {page==="orga"&&can(role,"orga")&&<OrgaPage todos={todos} onSaveTodo={saveTodo} onDeleteTodo={id=>{const i=todos.find(t=>t.id===id);setTodos(prev=>prev.filter(t=>t.id!==id));showUndo("Task",i,()=>setTodos(prev=>[i,...prev]));}} meetings={meetings} onSaveMeeting={saveMeeting} onDeleteMeeting={id=>{const i=meetings.find(m=>m.id===id);setMeetings(prev=>prev.filter(m=>m.id!==id));showUndo("Trainertreff",i,()=>setMeetings(prev=>[i,...prev]));}} coaches={coaches} currentUser={user} toast={toast} showUndo={showUndo} readOnly={!can(role,"editAnything")} onlineUsers={onlineUsers}/>}
       {page==="teamplaner"&&<TeamplanerPage players={players} teamsets={teamsets} onSaveTeamset={can(role,"editAnything")?saveTSets:null} onDeleteTeamset={can(role,"editAnything")?id=>{const i=teamsets.find(t=>t.id===id);setTeamsets(prev=>prev.filter(t=>t.id!==id));showUndo("Team-Aufstellung",i,()=>setTeamsets(prev=>[i,...prev]));}:null} readOnly={!can(role,"editAnything")} showStrength={can(role,"seeStrength")} toast={toast} onlineUsers={onlineUsers} currentUser={user}/>}
       {page==="training" &&<TrainingPage sessions={sessions} players={players} coaches={coaches} exercises={exercises} onSaveSession={saveSe} onDeleteSession={id=>{const i=sessions.find(s=>s.id===id);setSessions(prev=>prev.filter(s=>s.id!==id));showUndo("Training",i,()=>setSessions(prev=>[i,...prev]));}} apiKey={apiKey} toast={toast} onSaveExercise={saveEx} pendingSetup={pendingSetup} onClearPendingSetup={()=>setPendingSetup(null)} onlineUsers={onlineUsers} currentUser={user}/>}
-      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches} onlineUsers={onlineUsers} currentUser={user}/>}
+      {page==="turnier"  &&<TurnierPage  tournaments={tournaments} onSaveTournament={saveTo} onDeleteTournament={id=>{const i=tournaments.find(t=>t.id===id);setTournaments(prev=>prev.filter(t=>t.id!==id));showUndo("Turnier",i,()=>setTournaments(prev=>[i,...prev]));}} coaches={coaches} onlineUsers={onlineUsers} currentUser={user} toast={toast}/>}
       {page==="kasse"    &&can(role,"kasse")&&<KassePage kassenbuch={kassenbuch} onSave={can(role,"editKasse")?saveKa:null} onDelete={can(role,"editKasse")?id=>{const i=kassenbuch.find(k=>k.id===id);setKassenbuch(prev=>prev.filter(k=>k.id!==id));showUndo("Eintrag",i,()=>setKassenbuch(prev=>[i,...prev]));}:null} readOnly={!can(role,"editKasse")} toast={toast} onlineUsers={onlineUsers} currentUser={user}/>}
       {(can(role,"settings")||role==="trainer"||role==="eltern")&&page==="settings"&&<SettingsPage exercises={exercises} players={players} coaches={coaches} sessions={sessions} tournaments={tournaments} kassenbuch={kassenbuch} onImport={doImport} toast={toast} apiKey={apiKey} onSaveApiKey={k=>setApiKey(k)} customCats={customCats} onSaveCustomCats={setCustomCats} firebaseUser={user} onLogout={logout} onFullBackup={doFullBackup} role={role} allUsers={allUsers} setUserRole={setUserRole} setUserName={setUserName} deleteUser={deleteUser} prefs={prefs} onPrefChange={toggleDark} onlineUsers={onlineUsers}/>}
     </main>
